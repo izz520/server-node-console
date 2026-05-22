@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"strings"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -15,6 +17,8 @@ type Config struct {
 }
 
 func Load() Config {
+	loadDotEnv()
+
 	return Config{
 		AppEnv:             getEnv("APP_ENV", "development"),
 		ServerAddr:         getEnv("SERVER_ADDR", ":8080"),
@@ -22,6 +26,15 @@ func Load() Config {
 		JWTSecret:          getEnv("JWT_SECRET", "change-me-in-production"),
 		EncryptionKey:      getEnv("ENCRYPTION_KEY", "replace-with-32-byte-secret-key"),
 		CORSAllowedOrigins: splitCSV(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:5173")),
+	}
+}
+
+func loadDotEnv() {
+	for _, path := range []string{".env", "backend/.env"} {
+		if _, err := os.Stat(path); err == nil {
+			_ = godotenv.Load(path)
+			return
+		}
 	}
 }
 

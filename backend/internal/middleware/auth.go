@@ -4,20 +4,15 @@ import (
 	"net/http"
 	"strings"
 
+	"server-sing-box-2/backend/internal/auth"
+
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 )
 
 const (
 	ContextUserID = "userID"
 	ContextRole   = "role"
 )
-
-type Claims struct {
-	UserID uint   `json:"userId"`
-	Role   string `json:"role"`
-	jwt.RegisteredClaims
-}
 
 func Auth(secret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -28,22 +23,15 @@ func Auth(secret string) gin.HandlerFunc {
 			return
 		}
 
-		token, err := jwt.ParseWithClaims(tokenValue, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-			return []byte(secret), nil
-		})
-		if err != nil || !token.Valid {
+		claims, err := auth.ParseToken(secret, tokenValue)
+		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-			return
-		}
-
-		claims, ok := token.Claims.(*Claims)
-		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid claims"})
 			return
 		}
 
 		c.Set(ContextUserID, claims.UserID)
 		c.Set(ContextRole, claims.Role)
+		c.Set("claims", claims)
 		c.Next()
 	}
 }

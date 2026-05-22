@@ -24,19 +24,20 @@ func New(deps Dependencies) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery(), cors(deps.Config.CORSAllowedOrigins))
 
-	h := handler.New(deps.DB)
+	h := handler.New(deps.DB, deps.Config.JWTSecret)
 
 	r.GET("/healthz", h.Health)
 
 	api := r.Group("/api/v1")
 	{
-		api.POST("/auth/register", h.NotImplemented("auth.register"))
-		api.POST("/auth/login", h.NotImplemented("auth.login"))
+		api.POST("/auth/register", h.Register)
+		api.POST("/auth/login", h.Login)
 
 		protected := api.Group("")
 		protected.Use(middleware.Auth(deps.Config.JWTSecret))
 		{
-			protected.GET("/me", h.NotImplemented("users.me"))
+			protected.GET("/me", h.Me)
+			protected.POST("/auth/refresh", h.RefreshToken)
 
 			protected.GET("/servers", h.NotImplemented("servers.list"))
 			protected.POST("/servers", h.NotImplemented("servers.create"))

@@ -10,6 +10,9 @@ go mod tidy
 go run ./cmd/api
 ```
 
+The server automatically loads `.env` from the current directory. Shell
+environment variables take precedence over values in `.env`.
+
 The health check is available at:
 
 ```text
