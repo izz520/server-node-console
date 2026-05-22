@@ -1,6 +1,7 @@
 export type UserRole = "user" | "admin";
 
 export type ServerStatus = "normal" | "connection_failed" | "disabled";
+export type SSHAuthMethod = "password" | "private_key";
 
 export type NodeStatus =
   | "installing"
@@ -17,6 +18,7 @@ export interface User {
   username: string;
   email: string;
   role: UserRole;
+  createdAt?: string;
 }
 
 export interface Server {
@@ -25,8 +27,14 @@ export interface Server {
   host: string;
   sshPort: number;
   sshUsername: string;
+  authMethod: SSHAuthMethod;
   status: ServerStatus;
   region?: string;
+  tags?: string;
+  remark?: string;
+  hasPassword: boolean;
+  hasPrivateKey: boolean;
+  lastCheckedAt?: string | null;
 }
 
 export interface ProtocolNode {

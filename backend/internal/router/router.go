@@ -24,7 +24,7 @@ func New(deps Dependencies) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery(), cors(deps.Config.CORSAllowedOrigins))
 
-	h := handler.New(deps.DB, deps.Config.JWTSecret)
+	h := handler.New(deps.DB, deps.Config.JWTSecret, deps.Config.EncryptionKey)
 
 	r.GET("/healthz", h.Health)
 
@@ -39,12 +39,12 @@ func New(deps Dependencies) *gin.Engine {
 			protected.GET("/me", h.Me)
 			protected.POST("/auth/refresh", h.RefreshToken)
 
-			protected.GET("/servers", h.NotImplemented("servers.list"))
-			protected.POST("/servers", h.NotImplemented("servers.create"))
-			protected.GET("/servers/:id", h.NotImplemented("servers.get"))
-			protected.PUT("/servers/:id", h.NotImplemented("servers.update"))
-			protected.DELETE("/servers/:id", h.NotImplemented("servers.delete"))
-			protected.POST("/servers/:id/test-ssh", h.NotImplemented("servers.testSSH"))
+			protected.GET("/servers", h.ListServers)
+			protected.POST("/servers", h.CreateServer)
+			protected.GET("/servers/:id", h.GetServer)
+			protected.PUT("/servers/:id", h.UpdateServer)
+			protected.DELETE("/servers/:id", h.DeleteServer)
+			protected.POST("/servers/:id/test-ssh", h.TestServerSSH)
 
 			protected.GET("/servers/:id/nat-mappings", h.NotImplemented("natMappings.list"))
 			protected.POST("/servers/:id/nat-mappings", h.NotImplemented("natMappings.create"))

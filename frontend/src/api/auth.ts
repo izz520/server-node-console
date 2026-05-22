@@ -6,8 +6,15 @@ export interface LoginPayload {
   password: string;
 }
 
+export interface RegisterPayload {
+  username: string;
+  email: string;
+  password: string;
+}
+
 export interface LoginResponse {
   token: string;
+  expiresAt: string;
   user: User;
 }
 
@@ -16,7 +23,17 @@ export async function login(payload: LoginPayload) {
   return data;
 }
 
+export async function register(payload: RegisterPayload) {
+  const { data } = await request.post<LoginResponse>("/auth/register", payload);
+  return data;
+}
+
 export async function getMe() {
   const { data } = await request.get<User>("/me");
+  return data;
+}
+
+export async function refreshToken() {
+  const { data } = await request.post<LoginResponse>("/auth/refresh");
   return data;
 }

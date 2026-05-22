@@ -15,12 +15,13 @@ import (
 )
 
 type Handler struct {
-	db        *gorm.DB
-	jwtSecret string
+	db            *gorm.DB
+	jwtSecret     string
+	encryptionKey string
 }
 
-func New(db *gorm.DB, jwtSecret string) *Handler {
-	return &Handler{db: db, jwtSecret: jwtSecret}
+func New(db *gorm.DB, jwtSecret string, encryptionKey string) *Handler {
+	return &Handler{db: db, jwtSecret: jwtSecret, encryptionKey: encryptionKey}
 }
 
 func (h *Handler) Health(c *gin.Context) {

@@ -1,11 +1,13 @@
-import { Activity, Database, KeyRound, Server, Share2 } from "lucide-react";
+import { Activity, Database, KeyRound, Share2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
 import { AppLayout } from "@/components/layout/app-layout";
 import { DashboardPage } from "@/pages/dashboard";
 import { LoginPage } from "@/pages/login";
 import { NotFoundPage } from "@/pages/not-found";
+import { RegisterPage } from "@/pages/register";
 import { ResourcePlaceholder } from "@/pages/resource-placeholder";
+import { ServersPage } from "@/pages/servers";
 import { useAuthStore } from "@/stores/auth";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -22,6 +24,10 @@ export const router = createBrowserRouter([
     element: <LoginPage />,
   },
   {
+    path: "/register",
+    element: <RegisterPage />,
+  },
+  {
     path: "/",
     element: (
       <RequireAuth>
@@ -35,19 +41,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "servers",
-        element: (
-          <ResourcePlaceholder
-            actions={[
-              "添加服务器并测试 SSH 连通性",
-              "编辑服务器和覆盖 SSH 凭据",
-              "维护 NAT 端口映射",
-              "查看服务器连接状态",
-            ]}
-            description="管理当前账号下的服务器资产和 NAT 端口映射记录。"
-            icon={Server}
-            title="服务器管理"
-          />
-        ),
+        element: <ServersPage />,
       },
       {
         path: "nodes",
