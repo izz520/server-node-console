@@ -27,6 +27,8 @@ type authResponse struct {
 	} `json:"user"`
 }
 
+var currentTestDB *gorm.DB
+
 func TestAuthRegisterLoginMeAndRefresh(t *testing.T) {
 	app := testRouter(t)
 
@@ -113,18 +115,28 @@ func testRouter(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&domain.User{}); err != nil {
-		t.Fatalf("migrate user: %v", err)
+	if err := db.AutoMigrate(&domain.User{}, &domain.Server{}, &domain.NATPortMapping{}, &domain.ProtocolNode{}, &domain.Subscription{}, &domain.SubscriptionNode{}, &domain.Task{}, &domain.TaskLog{}, &domain.OperationLog{}); err != nil {
+		t.Fatalf("migrate test tables: %v", err)
 	}
+	currentTestDB = db
 
 	return router.New(router.Dependencies{
 		Config: config.Config{
 			AppEnv:             "test",
 			JWTSecret:          "test-secret",
+			EncryptionKey:      "test-encryption-key",
 			CORSAllowedOrigins: []string{"http://localhost:5173"},
 		},
 		DB: db,
 	})
+}
+
+func extractDB(t *testing.T, _ http.Handler) *gorm.DB {
+	t.Helper()
+	if currentTestDB == nil {
+		t.Fatal("test database is not initialized")
+	}
+	return currentTestDB
 }
 
 func performRequest(handler http.Handler, method string, path string, body string, token string) *httptest.ResponseRecorder {

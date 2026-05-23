@@ -23,6 +23,7 @@ export interface User {
 
 export interface Server {
   id: number;
+  userId: number;
   name: string;
   host: string;
   sshPort: number;
@@ -37,27 +38,78 @@ export interface Server {
   lastCheckedAt?: string | null;
 }
 
+export interface NATPortMapping {
+  id: number;
+  serverId: number;
+  name: string;
+  transport?: string;
+  listenPort: number;
+  publicPort: number;
+  remark?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ProtocolNode {
   id: number;
+  userId: number;
   name: string;
   protocol: string;
+  address: string;
+  port: number;
   listenPort?: number;
   publicPort?: number;
+  remark?: string;
+  installMethod: "system" | "external";
   status: NodeStatus;
+  hasSensitive: boolean;
 }
 
 export interface Subscription {
   id: number;
+  userId: number;
   name: string;
   enabled: boolean;
   format: string;
+  nodeIds: number[];
   nodeCount: number;
+  token?: string;
+  subscriptionUrl?: string;
+  remark?: string;
 }
 
 export interface Task {
   id: number;
+  userId: number;
   type: "install" | "uninstall" | "ssh_test";
   status: TaskStatus;
   error?: string;
+  serverId?: number | null;
+  nodeId?: number | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskLog {
+  id: number;
+  taskId: number;
+  level: string;
+  message: string;
+  createdAt: string;
+}
+
+export interface TaskDetail {
+  task: Task;
+  logs: TaskLog[];
+}
+
+export interface OperationLog {
+  id: number;
+  userId?: number | null;
+  action: string;
+  resource: string;
+  metadata: string;
   createdAt: string;
 }

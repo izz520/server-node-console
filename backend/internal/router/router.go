@@ -46,41 +46,44 @@ func New(deps Dependencies) *gin.Engine {
 			protected.DELETE("/servers/:id", h.DeleteServer)
 			protected.POST("/servers/:id/test-ssh", h.TestServerSSH)
 
-			protected.GET("/servers/:id/nat-mappings", h.NotImplemented("natMappings.list"))
-			protected.POST("/servers/:id/nat-mappings", h.NotImplemented("natMappings.create"))
-			protected.PUT("/nat-mappings/:id", h.NotImplemented("natMappings.update"))
-			protected.DELETE("/nat-mappings/:id", h.NotImplemented("natMappings.delete"))
+			protected.GET("/servers/:id/nat-mappings", h.ListNATMappings)
+			protected.POST("/servers/:id/nat-mappings", h.CreateNATMapping)
+			protected.PUT("/nat-mappings/:id", h.UpdateNATMapping)
+			protected.DELETE("/nat-mappings/:id", h.DeleteNATMapping)
 
-			protected.GET("/nodes", h.NotImplemented("nodes.list"))
-			protected.POST("/nodes/install", h.NotImplemented("nodes.install"))
-			protected.POST("/nodes/import", h.NotImplemented("nodes.import"))
-			protected.POST("/nodes/:id/uninstall", h.NotImplemented("nodes.uninstall"))
-			protected.PUT("/nodes/:id", h.NotImplemented("nodes.update"))
-			protected.DELETE("/nodes/:id", h.NotImplemented("nodes.delete"))
+			protected.GET("/nodes", h.ListNodes)
+			protected.POST("/nodes/install", h.InstallNode)
+			protected.POST("/nodes/import", h.ImportNode)
+			protected.POST("/nodes/:id/uninstall", h.UninstallNode)
+			protected.PUT("/nodes/:id", h.UpdateNode)
+			protected.DELETE("/nodes/:id", h.DeleteNode)
 
-			protected.GET("/subscriptions", h.NotImplemented("subscriptions.list"))
-			protected.POST("/subscriptions", h.NotImplemented("subscriptions.create"))
-			protected.GET("/subscriptions/:id", h.NotImplemented("subscriptions.get"))
-			protected.PUT("/subscriptions/:id", h.NotImplemented("subscriptions.update"))
-			protected.DELETE("/subscriptions/:id", h.NotImplemented("subscriptions.delete"))
-			protected.POST("/subscriptions/:id/reset-token", h.NotImplemented("subscriptions.resetToken"))
+			protected.GET("/subscriptions", h.ListSubscriptions)
+			protected.POST("/subscriptions", h.CreateSubscription)
+			protected.GET("/subscriptions/:id", h.GetSubscription)
+			protected.PUT("/subscriptions/:id", h.UpdateSubscription)
+			protected.DELETE("/subscriptions/:id", h.DeleteSubscription)
+			protected.POST("/subscriptions/:id/reset-token", h.ResetSubscriptionToken)
 
-			protected.GET("/tasks", h.NotImplemented("tasks.list"))
-			protected.GET("/tasks/:id", h.NotImplemented("tasks.get"))
+			protected.GET("/tasks", h.ListTasks)
+			protected.GET("/tasks/:id", h.GetTask)
+			protected.GET("/operation-logs", h.ListOperationLogs)
 
 			admin := protected.Group("/admin")
 			admin.Use(middleware.AdminOnly())
 			{
-				admin.GET("/users", h.NotImplemented("admin.users.list"))
-				admin.GET("/servers", h.NotImplemented("admin.servers.list"))
-				admin.GET("/nodes", h.NotImplemented("admin.nodes.list"))
-				admin.GET("/subscriptions", h.NotImplemented("admin.subscriptions.list"))
-				admin.GET("/tasks", h.NotImplemented("admin.tasks.list"))
+				admin.GET("/users", h.AdminListUsers)
+				admin.GET("/servers", h.AdminListServers)
+				admin.GET("/nodes", h.AdminListNodes)
+				admin.GET("/subscriptions", h.AdminListSubscriptions)
+				admin.GET("/tasks", h.AdminListTasks)
+				admin.GET("/tasks/:id", h.AdminGetTask)
+				admin.GET("/operation-logs", h.AdminListOperationLogs)
 			}
 		}
 	}
 
-	r.GET("/sub/:token", h.NotImplemented("public.subscription"))
+	r.GET("/sub/:token", h.PublicSubscription)
 
 	return r
 }

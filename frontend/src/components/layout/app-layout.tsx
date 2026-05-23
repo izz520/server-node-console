@@ -6,6 +6,7 @@ import {
   LogOut,
   Server,
   Share2,
+  ShieldCheck,
 } from "lucide-react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,12 @@ const navItems = [
 
 export function AppLayout() {
   const clearSession = useAuthStore((state) => state.clearSession);
+  const user = useAuthStore((state) => state.user);
   const navigate = useNavigate();
+  const visibleNavItems =
+    user?.role === "admin"
+      ? [...navItems, { label: "管理员", icon: ShieldCheck, to: "/admin" }]
+      : navItems;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -35,7 +41,7 @@ export function AppLayout() {
           </div>
         </div>
         <nav className="space-y-1">
-          {navItems.map((item) => (
+          {visibleNavItems.map((item) => (
             <NavLink
               className={({ isActive }) =>
                 [
@@ -73,10 +79,31 @@ export function AppLayout() {
             退出
           </Button>
         </header>
-        <main className="px-4 py-6 lg:px-8">
+        <main className="px-4 pt-6 pb-24 lg:px-8 lg:pb-6">
           <Outlet />
         </main>
       </div>
+      <nav className="fixed inset-x-0 bottom-0 z-20 border-slate-200 border-t bg-white/95 px-2 py-2 shadow-lg backdrop-blur lg:hidden">
+        <div className="flex gap-1 overflow-x-auto">
+          {visibleNavItems.map((item) => (
+            <NavLink
+              className={({ isActive }) =>
+                [
+                  "flex min-w-16 flex-1 flex-col items-center justify-center gap-1 rounded-md px-2 py-2 text-xs transition",
+                  isActive
+                    ? "bg-slate-950 text-white"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-950",
+                ].join(" ")
+              }
+              key={item.to}
+              to={item.to}
+            >
+              <item.icon className="h-4 w-4" />
+              <span className="whitespace-nowrap">{item.label}</span>
+            </NavLink>
+          ))}
+        </div>
+      </nav>
     </div>
   );
 }

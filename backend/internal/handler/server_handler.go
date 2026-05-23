@@ -32,6 +32,7 @@ type serverRequest struct {
 
 type serverResponse struct {
 	ID            uint                `json:"id"`
+	UserID        uint                `json:"userId"`
 	Name          string              `json:"name"`
 	Host          string              `json:"host"`
 	SSHPort       int                 `json:"sshPort"`
@@ -131,6 +132,7 @@ func (h *Handler) CreateServer(c *gin.Context) {
 		return
 	}
 
+	h.logOperation(&userID, "server.create", "server", map[string]any{"serverId": server.ID, "name": server.Name})
 	c.JSON(http.StatusCreated, toServerResponse(server))
 }
 
@@ -195,6 +197,7 @@ func (h *Handler) UpdateServer(c *gin.Context) {
 		return
 	}
 
+	h.logOperation(&server.UserID, "server.update", "server", map[string]any{"serverId": server.ID, "name": server.Name})
 	c.JSON(http.StatusOK, toServerResponse(server))
 }
 
@@ -204,12 +207,53 @@ func (h *Handler) DeleteServer(c *gin.Context) {
 		return
 	}
 
+	if blocked, message := h.serverDeletionBlocked(server); blocked {
+		c.JSON(http.StatusConflict, gin.H{"error": message})
+		return
+	}
+
 	if err := h.db.Delete(&server).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete server failed"})
 		return
 	}
 
+	h.logOperation(&server.UserID, "server.delete", "server", map[string]any{"serverId": server.ID, "name": server.Name})
 	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) serverDeletionBlocked(server domain.Server) (bool, string) {
+	var natMappingCount int64
+	if err := h.db.Model(&domain.NATPortMapping{}).
+		Where("user_id = ? AND server_id = ?", server.UserID, server.ID).
+		Count(&natMappingCount).Error; err != nil {
+		return true, "check server NAT mappings failed"
+	}
+	if natMappingCount > 0 {
+		return true, "server has NAT mappings; delete NAT mappings first"
+	}
+
+	var subscriptionRefCount int64
+	if err := h.db.Model(&domain.SubscriptionNode{}).
+		Joins("JOIN protocol_nodes ON protocol_nodes.id = subscription_nodes.node_id").
+		Where("protocol_nodes.user_id = ? AND protocol_nodes.server_id = ? AND protocol_nodes.deleted_at IS NULL", server.UserID, server.ID).
+		Count(&subscriptionRefCount).Error; err != nil {
+		return true, "check server references failed"
+	}
+	if subscriptionRefCount > 0 {
+		return true, "server has nodes referenced by subscriptions; remove them from subscriptions first"
+	}
+
+	var nodeCount int64
+	if err := h.db.Model(&domain.ProtocolNode{}).
+		Where("user_id = ? AND server_id = ?", server.UserID, server.ID).
+		Count(&nodeCount).Error; err != nil {
+		return true, "check server nodes failed"
+	}
+	if nodeCount > 0 {
+		return true, "server has nodes; uninstall or delete nodes first"
+	}
+
+	return false, ""
 }
 
 func (h *Handler) TestServerSSH(c *gin.Context) {
@@ -235,6 +279,7 @@ func (h *Handler) TestServerSSH(c *gin.Context) {
 		server.Status = domain.ServerStatusConnectionFailed
 		server.LastCheckedAt = &now
 		_ = h.db.Save(&server).Error
+		h.logOperation(&server.UserID, "server.test_ssh.failed", "server", map[string]any{"serverId": server.ID, "name": server.Name})
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ssh connection failed", "details": err.Error(), "server": toServerResponse(server)})
 		return
 	}
@@ -246,6 +291,7 @@ func (h *Handler) TestServerSSH(c *gin.Context) {
 		return
 	}
 
+	h.logOperation(&server.UserID, "server.test_ssh.success", "server", map[string]any{"serverId": server.ID, "name": server.Name})
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "server": toServerResponse(server)})
 }
 
@@ -397,6 +443,7 @@ func serverConnectionChanged(server domain.Server, req serverRequest) bool {
 func toServerResponse(server domain.Server) serverResponse {
 	return serverResponse{
 		ID:            server.ID,
+		UserID:        server.UserID,
 		Name:          server.Name,
 		Host:          server.Host,
 		SSHPort:       server.SSHPort,

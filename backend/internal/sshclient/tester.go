@@ -1,6 +1,7 @@
 package sshclient
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -27,13 +28,18 @@ type TestRequest struct {
 }
 
 func TestConnection(ctx context.Context, req TestRequest) error {
+	_, err := RunCommand(ctx, req, "true")
+	return err
+}
+
+func RunCommand(ctx context.Context, req TestRequest, command string) (string, error) {
 	if req.Timeout == 0 {
-		req.Timeout = 10 * time.Second
+		req.Timeout = 30 * time.Minute
 	}
 
 	authMethod, err := buildAuthMethod(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	config := &ssh.ClientConfig{
@@ -47,28 +53,31 @@ func TestConnection(ctx context.Context, req TestRequest) error {
 	dialer := net.Dialer{Timeout: req.Timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
-		return fmt.Errorf("connect ssh address: %w", err)
+		return "", fmt.Errorf("connect ssh address: %w", err)
 	}
 	defer conn.Close()
 
 	clientConn, chans, reqs, err := ssh.NewClientConn(conn, address, config)
 	if err != nil {
-		return fmt.Errorf("authenticate ssh: %w", err)
+		return "", fmt.Errorf("authenticate ssh: %w", err)
 	}
 	client := ssh.NewClient(clientConn, chans, reqs)
 	defer client.Close()
 
 	session, err := client.NewSession()
 	if err != nil {
-		return fmt.Errorf("create ssh session: %w", err)
+		return "", fmt.Errorf("create ssh session: %w", err)
 	}
 	defer session.Close()
 
-	if err := session.Run("true"); err != nil {
-		return fmt.Errorf("run ssh probe: %w", err)
+	var output bytes.Buffer
+	session.Stdout = &output
+	session.Stderr = &output
+	if err := session.Run(command); err != nil {
+		return output.String(), fmt.Errorf("run ssh command: %w", err)
 	}
 
-	return nil
+	return output.String(), nil
 }
 
 func buildAuthMethod(req TestRequest) (ssh.AuthMethod, error) {

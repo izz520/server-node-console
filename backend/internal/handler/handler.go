@@ -37,15 +37,6 @@ func (h *Handler) Health(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func (h *Handler) NotImplemented(resource string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.JSON(http.StatusNotImplemented, gin.H{
-			"resource": resource,
-			"message":  "endpoint scaffolded; implementation pending",
-		})
-	}
-}
-
 type registerRequest struct {
 	Username string `json:"username" binding:"required,min=2,max=64"`
 	Email    string `json:"email" binding:"required,email,max=255"`
@@ -140,6 +131,8 @@ func (h *Handler) Login(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid account or password"})
 		return
 	}
+
+	h.logOperation(&user.ID, "auth.login", "user", map[string]any{"userId": user.ID})
 
 	response, err := h.buildAuthResponse(user)
 	if err != nil {

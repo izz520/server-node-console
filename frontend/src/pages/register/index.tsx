@@ -2,6 +2,7 @@ import { UserPlus } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { register } from "@/api/auth";
+import { getErrorMessage } from "@/api/errors";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -25,8 +26,13 @@ export function RegisterPage() {
       const response = await register({ username, email, password });
       setSession(response.token, response.expiresAt, response.user);
       navigate("/");
-    } catch {
-      setError("注册失败，请检查用户名、邮箱或密码是否已被使用");
+    } catch (submitError) {
+      setError(
+        getErrorMessage(
+          submitError,
+          "注册失败，请检查用户名、邮箱或密码是否已被使用",
+        ),
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -55,6 +61,7 @@ export function RegisterPage() {
                 id="username"
                 onChange={(event) => setUsername(event.target.value)}
                 placeholder="alice"
+                required
                 value={username}
               />
             </label>
@@ -65,6 +72,7 @@ export function RegisterPage() {
                 id="email"
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="alice@example.com"
+                required
                 type="email"
                 value={email}
               />
@@ -74,8 +82,10 @@ export function RegisterPage() {
               <Input
                 autoComplete="new-password"
                 id="new-password"
+                minLength={8}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="至少 8 位"
+                required
                 type="password"
                 value={password}
               />

@@ -136,16 +136,17 @@ type ProtocolNode struct {
 }
 
 type Subscription struct {
-	ID        uint               `gorm:"primaryKey" json:"id"`
-	UserID    uint               `gorm:"index;not null" json:"userId"`
-	Name      string             `gorm:"size:120;not null" json:"name"`
-	TokenHash string             `gorm:"size:255;uniqueIndex;not null" json:"-"`
-	Enabled   bool               `gorm:"not null;default:true" json:"enabled"`
-	Format    SubscriptionFormat `gorm:"size:32;not null" json:"format"`
-	Remark    string             `gorm:"type:text" json:"remark"`
-	CreatedAt time.Time          `json:"createdAt"`
-	UpdatedAt time.Time          `json:"updatedAt"`
-	DeletedAt gorm.DeletedAt     `gorm:"index" json:"-"`
+	ID             uint               `gorm:"primaryKey" json:"id"`
+	UserID         uint               `gorm:"index;not null" json:"userId"`
+	Name           string             `gorm:"size:120;not null" json:"name"`
+	TokenHash      string             `gorm:"size:255;uniqueIndex;not null" json:"-"`
+	EncryptedToken string             `gorm:"type:text" json:"-"`
+	Enabled        bool               `gorm:"not null;default:true" json:"enabled"`
+	Format         SubscriptionFormat `gorm:"size:32;not null" json:"format"`
+	Remark         string             `gorm:"type:text" json:"remark"`
+	CreatedAt      time.Time          `json:"createdAt"`
+	UpdatedAt      time.Time          `json:"updatedAt"`
+	DeletedAt      gorm.DeletedAt     `gorm:"index" json:"-"`
 }
 
 type SubscriptionNode struct {

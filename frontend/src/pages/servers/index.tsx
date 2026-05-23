@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
+  Network,
   Pencil,
   PlugZap,
   Plus,
@@ -9,19 +10,29 @@ import {
   XCircle,
 } from "lucide-react";
 import { type FormEvent, useMemo, useState } from "react";
+import { getErrorMessage } from "@/api/errors";
 import {
+  createNATMapping,
   createServer,
+  deleteNATMapping,
   deleteServer,
+  listNATMappings,
   listServers,
+  type NATMappingPayload,
   type ServerPayload,
   testServerSSH,
+  updateNATMapping,
   updateServer,
 } from "@/api/resources";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type { Server as ServerModel, SSHAuthMethod } from "@/types/domain";
+import type {
+  NATPortMapping,
+  Server as ServerModel,
+  SSHAuthMethod,
+} from "@/types/domain";
 
 const emptyForm: ServerPayload = {
   name: "",
@@ -42,15 +53,39 @@ const statusLabels = {
   disabled: "禁用",
 };
 
+const emptyNATForm: NATMappingPayload = {
+  name: "",
+  transport: "TCP",
+  listenPort: 8000,
+  publicPort: 9000,
+  remark: "",
+};
+
 export function ServersPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<ServerPayload>(emptyForm);
+  const [natForm, setNATForm] = useState<NATMappingPayload>(emptyNATForm);
   const [editingServer, setEditingServer] = useState<ServerModel | null>(null);
+  const [editingMapping, setEditingMapping] = useState<NATPortMapping | null>(
+    null,
+  );
+  const [selectedServerID, setSelectedServerID] = useState<number | null>(null);
   const [message, setMessage] = useState("");
+  const [natMessage, setNATMessage] = useState("");
 
   const serversQuery = useQuery({
     queryKey: ["servers"],
     queryFn: listServers,
+  });
+
+  const selectedServer = serversQuery.data?.find(
+    (server) => server.id === selectedServerID,
+  );
+
+  const natMappingsQuery = useQuery({
+    queryKey: ["nat-mappings", selectedServerID],
+    queryFn: () => listNATMappings(selectedServerID ?? 0),
+    enabled: Boolean(selectedServerID),
   });
 
   const saveMutation = useMutation({
@@ -91,7 +126,43 @@ export function ServersPage() {
     },
   });
 
+  const saveNATMutation = useMutation({
+    mutationFn: (payload: NATMappingPayload) => {
+      if (editingMapping) {
+        return updateNATMapping(editingMapping.id, payload);
+      }
+      if (!selectedServerID) {
+        throw new Error("请先选择服务器");
+      }
+      return createNATMapping(selectedServerID, payload);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ["nat-mappings", selectedServerID],
+      });
+      resetNATForm();
+      setNATMessage("NAT 映射已保存");
+    },
+    onError: (error) => {
+      setNATMessage(getErrorMessage(error, "保存 NAT 映射失败"));
+    },
+  });
+
+  const deleteNATMutation = useMutation({
+    mutationFn: deleteNATMapping,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ["nat-mappings", selectedServerID],
+      });
+      setNATMessage("NAT 映射已删除");
+    },
+    onError: (error) => {
+      setNATMessage(getErrorMessage(error, "删除 NAT 映射失败"));
+    },
+  });
+
   const servers = serversQuery.data ?? [];
+  const natMappings = natMappingsQuery.data ?? [];
   const isSaving = saveMutation.isPending;
   const credentialHint = useMemo(() => {
     if (!editingServer) {
@@ -109,6 +180,11 @@ export function ServersPage() {
   function resetForm() {
     setForm(emptyForm);
     setEditingServer(null);
+  }
+
+  function resetNATForm() {
+    setNATForm(emptyNATForm);
+    setEditingMapping(null);
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -137,6 +213,28 @@ export function ServersPage() {
       remark: server.remark ?? "",
     });
     setMessage("");
+  }
+
+  function handleNATSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setNATMessage("");
+    saveNATMutation.mutate({
+      ...natForm,
+      listenPort: Number(natForm.listenPort),
+      publicPort: Number(natForm.publicPort),
+    });
+  }
+
+  function startEditMapping(mapping: NATPortMapping) {
+    setEditingMapping(mapping);
+    setNATForm({
+      name: mapping.name,
+      transport: mapping.transport || "TCP",
+      listenPort: mapping.listenPort,
+      publicPort: mapping.publicPort,
+      remark: mapping.remark ?? "",
+    });
+    setNATMessage("");
   }
 
   return (
@@ -294,88 +392,284 @@ export function ServersPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <div className="font-medium text-slate-950">服务器列表</div>
-        </CardHeader>
-        <CardContent>
-          {serversQuery.isLoading ? (
-            <div className="text-slate-500 text-sm">加载中...</div>
-          ) : servers.length === 0 ? (
-            <div className="rounded-md border border-dashed border-slate-200 p-8 text-center text-slate-500 text-sm">
-              还没有服务器，先添加一台用于后续安装协议节点。
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] border-collapse text-left text-sm">
-                <thead>
-                  <tr className="border-slate-100 border-b text-slate-500">
-                    <th className="py-3 pr-3 font-medium">名称</th>
-                    <th className="py-3 pr-3 font-medium">SSH</th>
-                    <th className="py-3 pr-3 font-medium">认证</th>
-                    <th className="py-3 pr-3 font-medium">状态</th>
-                    <th className="py-3 pr-3 font-medium">地区</th>
-                    <th className="py-3 pr-3 text-right font-medium">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {servers.map((server) => (
-                    <tr className="border-slate-100 border-b" key={server.id}>
-                      <td className="py-3 pr-3">
-                        <div className="font-medium text-slate-950">
-                          {server.name}
-                        </div>
-                        {server.tags && (
-                          <div className="mt-1 text-slate-500 text-xs">
-                            {server.tags}
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-3 pr-3 text-slate-700">
-                        {server.sshUsername}@{server.host}:{server.sshPort}
-                      </td>
-                      <td className="py-3 pr-3 text-slate-700">
-                        {server.authMethod === "password" ? "密码" : "私钥"}
-                      </td>
-                      <td className="py-3 pr-3">
-                        <StatusBadge status={server.status} />
-                      </td>
-                      <td className="py-3 pr-3 text-slate-700">
-                        {server.region || "-"}
-                      </td>
-                      <td className="py-3 pr-3">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            onClick={() => testMutation.mutate(server.id)}
-                            title="测试 SSH"
-                            variant="secondary"
-                          >
-                            <PlugZap className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            onClick={() => startEdit(server)}
-                            title="编辑"
-                            variant="secondary"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            onClick={() => deleteMutation.mutate(server.id)}
-                            title="删除"
-                            variant="danger"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </td>
+      <div className="space-y-6">
+        <Card>
+          <CardHeader>
+            <div className="font-medium text-slate-950">服务器列表</div>
+          </CardHeader>
+          <CardContent>
+            {serversQuery.isLoading ? (
+              <div className="text-slate-500 text-sm">加载中...</div>
+            ) : servers.length === 0 ? (
+              <div className="rounded-md border border-dashed border-slate-200 p-8 text-center text-slate-500 text-sm">
+                还没有服务器，先添加一台用于后续安装协议节点。
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[860px] border-collapse text-left text-sm">
+                  <thead>
+                    <tr className="border-slate-100 border-b text-slate-500">
+                      <th className="py-3 pr-3 font-medium">名称</th>
+                      <th className="py-3 pr-3 font-medium">SSH</th>
+                      <th className="py-3 pr-3 font-medium">认证</th>
+                      <th className="py-3 pr-3 font-medium">状态</th>
+                      <th className="py-3 pr-3 font-medium">地区</th>
+                      <th className="py-3 pr-3 text-right font-medium">操作</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {servers.map((server) => (
+                      <tr className="border-slate-100 border-b" key={server.id}>
+                        <td className="py-3 pr-3">
+                          <div className="font-medium text-slate-950">
+                            {server.name}
+                          </div>
+                          {server.tags && (
+                            <div className="mt-1 text-slate-500 text-xs">
+                              {server.tags}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 pr-3 text-slate-700">
+                          {server.sshUsername}@{server.host}:{server.sshPort}
+                        </td>
+                        <td className="py-3 pr-3 text-slate-700">
+                          {server.authMethod === "password" ? "密码" : "私钥"}
+                        </td>
+                        <td className="py-3 pr-3">
+                          <StatusBadge status={server.status} />
+                        </td>
+                        <td className="py-3 pr-3 text-slate-700">
+                          {server.region || "-"}
+                        </td>
+                        <td className="py-3 pr-3">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              onClick={() => {
+                                setSelectedServerID(server.id);
+                                resetNATForm();
+                                setNATMessage("");
+                              }}
+                              title="NAT 映射"
+                              variant="secondary"
+                            >
+                              <Network className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              onClick={() => testMutation.mutate(server.id)}
+                              title="测试 SSH"
+                              variant="secondary"
+                            >
+                              <PlugZap className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              onClick={() => startEdit(server)}
+                              title="编辑"
+                              variant="secondary"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              onClick={() => {
+                                if (window.confirm("确定删除这台服务器吗？")) {
+                                  deleteMutation.mutate(server.id);
+                                }
+                              }}
+                              title="删除"
+                              variant="danger"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="font-medium text-slate-950">NAT 端口映射</div>
+                <p className="mt-1 text-slate-500 text-sm">
+                  仅记录端口关系，不会真实修改服务器网络配置。
+                </p>
+              </div>
+              {selectedServer && <Badge>{selectedServer.name}</Badge>}
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardHeader>
+          <CardContent>
+            {!selectedServerID ? (
+              <div className="rounded-md border border-dashed border-slate-200 p-8 text-center text-slate-500 text-sm">
+                点击服务器列表中的网络图标后维护 NAT 映射。
+              </div>
+            ) : (
+              <div className="grid gap-5 xl:grid-cols-[320px_1fr]">
+                <form className="space-y-3" onSubmit={handleNATSubmit}>
+                  <Field label="映射名称">
+                    <Input
+                      onChange={(event) =>
+                        setNATForm({ ...natForm, name: event.target.value })
+                      }
+                      placeholder="AnyTLS 公网端口"
+                      required
+                      value={natForm.name}
+                    />
+                  </Field>
+                  <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-1">
+                    <Field label="协议类型">
+                      <select
+                        className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                        onChange={(event) =>
+                          setNATForm({
+                            ...natForm,
+                            transport: event.target.value,
+                          })
+                        }
+                        value={natForm.transport}
+                      >
+                        <option value="TCP">TCP</option>
+                        <option value="UDP">UDP</option>
+                      </select>
+                    </Field>
+                    <Field label="实际监听端口">
+                      <Input
+                        max={65535}
+                        min={1}
+                        onChange={(event) =>
+                          setNATForm({
+                            ...natForm,
+                            listenPort: Number(event.target.value),
+                          })
+                        }
+                        required
+                        type="number"
+                        value={natForm.listenPort}
+                      />
+                    </Field>
+                    <Field label="对外访问端口">
+                      <Input
+                        max={65535}
+                        min={1}
+                        onChange={(event) =>
+                          setNATForm({
+                            ...natForm,
+                            publicPort: Number(event.target.value),
+                          })
+                        }
+                        required
+                        type="number"
+                        value={natForm.publicPort}
+                      />
+                    </Field>
+                  </div>
+                  <Field label="备注">
+                    <Input
+                      onChange={(event) =>
+                        setNATForm({ ...natForm, remark: event.target.value })
+                      }
+                      placeholder="可选"
+                      value={natForm.remark}
+                    />
+                  </Field>
+                  {natMessage && (
+                    <p className="text-slate-600 text-sm">{natMessage}</p>
+                  )}
+                  <div className="flex gap-2">
+                    <Button disabled={saveNATMutation.isPending} type="submit">
+                      {editingMapping ? "保存映射" : "添加映射"}
+                    </Button>
+                    {editingMapping && (
+                      <Button
+                        onClick={resetNATForm}
+                        type="button"
+                        variant="secondary"
+                      >
+                        取消
+                      </Button>
+                    )}
+                  </div>
+                </form>
+
+                {natMappingsQuery.isLoading ? (
+                  <div className="text-slate-500 text-sm">加载中...</div>
+                ) : natMappings.length === 0 ? (
+                  <div className="rounded-md border border-dashed border-slate-200 p-8 text-center text-slate-500 text-sm">
+                    当前服务器还没有 NAT 映射。
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[560px] border-collapse text-left text-sm">
+                      <thead>
+                        <tr className="border-slate-100 border-b text-slate-500">
+                          <th className="py-3 pr-3 font-medium">名称</th>
+                          <th className="py-3 pr-3 font-medium">协议</th>
+                          <th className="py-3 pr-3 font-medium">端口映射</th>
+                          <th className="py-3 pr-3 text-right font-medium">
+                            操作
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {natMappings.map((mapping) => (
+                          <tr
+                            className="border-slate-100 border-b"
+                            key={mapping.id}
+                          >
+                            <td className="py-3 pr-3">
+                              <div className="font-medium text-slate-950">
+                                {mapping.name}
+                              </div>
+                              {mapping.remark && (
+                                <div className="mt-1 text-slate-500 text-xs">
+                                  {mapping.remark}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-3 pr-3 text-slate-700">
+                              {mapping.transport || "-"}
+                            </td>
+                            <td className="py-3 pr-3 text-slate-700">
+                              {mapping.listenPort} → {mapping.publicPort}
+                            </td>
+                            <td className="py-3 pr-3">
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  onClick={() => startEditMapping(mapping)}
+                                  title="编辑映射"
+                                  variant="secondary"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  onClick={() =>
+                                    window.confirm(
+                                      "确定删除这条 NAT 映射吗？",
+                                    ) && deleteNATMutation.mutate(mapping.id)
+                                  }
+                                  title="删除映射"
+                                  variant="danger"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
@@ -415,14 +709,4 @@ function StatusBadge({ status }: { status: ServerModel["status"] }) {
   }
 
   return <Badge>{statusLabels[status]}</Badge>;
-}
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (typeof error === "object" && error && "response" in error) {
-    const response = (
-      error as { response?: { data?: { details?: string; error?: string } } }
-    ).response;
-    return response?.data?.details ?? response?.data?.error ?? fallback;
-  }
-  return fallback;
 }

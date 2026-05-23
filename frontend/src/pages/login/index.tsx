@@ -2,6 +2,7 @@ import { LockKeyhole } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { login } from "@/api/auth";
+import { getErrorMessage } from "@/api/errors";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,8 +25,8 @@ export function LoginPage() {
       const response = await login({ account, password });
       setSession(response.token, response.expiresAt, response.user);
       navigate("/");
-    } catch {
-      setError("账号或密码不正确");
+    } catch (submitError) {
+      setError(getErrorMessage(submitError, "账号或密码不正确"));
     } finally {
       setIsSubmitting(false);
     }
@@ -56,6 +57,7 @@ export function LoginPage() {
                 id="account"
                 onChange={(event) => setAccount(event.target.value)}
                 placeholder="admin@example.com"
+                required
                 value={account}
               />
             </label>
@@ -66,6 +68,7 @@ export function LoginPage() {
                 id="password"
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="请输入密码"
+                required
                 type="password"
                 value={password}
               />
