@@ -52,6 +52,7 @@ type subscriptionNodeView struct {
 	Remark     string `json:"remark,omitempty"`
 	RawLink    string `json:"rawLink,omitempty"`
 	ConfigJSON string `json:"configJson,omitempty"`
+	UUID       string `json:"uuid,omitempty"`
 }
 
 func (h *Handler) ListSubscriptions(c *gin.Context) {
@@ -405,6 +406,10 @@ func (h *Handler) subscriptionNodeViews(subscriptionID uint) ([]subscriptionNode
 	}
 
 	views := make([]subscriptionNodeView, 0, len(links))
+	sensitiveByNodeID, err := h.subscriptionNodeSensitiveValues(nodes)
+	if err != nil {
+		return nil, err
+	}
 	for _, link := range links {
 		node, ok := byID[link.NodeID]
 		if !ok {
@@ -424,9 +429,46 @@ func (h *Handler) subscriptionNodeViews(subscriptionID uint) ([]subscriptionNode
 			Remark:     config.Remark,
 			RawLink:    config.RawLink,
 			ConfigJSON: config.ConfigJSON,
+			UUID:       sensitiveByNodeID[node.ID]["uuid"],
 		})
 	}
 	return views, nil
+}
+
+func (h *Handler) subscriptionNodeSensitiveValues(nodes []domain.ProtocolNode) (map[uint]map[string]string, error) {
+	out := make(map[uint]map[string]string, len(nodes))
+	var encryptor *security.Encryptor
+
+	for _, node := range nodes {
+		if strings.TrimSpace(node.EncryptedProtocolJSON) == "" {
+			continue
+		}
+		if encryptor == nil {
+			var err error
+			encryptor, err = security.NewEncryptor(h.encryptionKey)
+			if err != nil {
+				return nil, err
+			}
+		}
+		plain, err := encryptor.Decrypt(node.EncryptedProtocolJSON)
+		if err != nil {
+			return nil, err
+		}
+		encryptedConfig := encryptedNodeConfig{}
+		if err := json.Unmarshal([]byte(plain), &encryptedConfig); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(encryptedConfig.Sensitive) == "" {
+			continue
+		}
+		values := map[string]string{}
+		if err := json.Unmarshal([]byte(encryptedConfig.Sensitive), &values); err != nil {
+			continue
+		}
+		out[node.ID] = values
+	}
+
+	return out, nil
 }
 
 func replaceSubscriptionNodes(tx *gorm.DB, subscriptionID uint, nodeIDs []uint) error {
@@ -530,6 +572,9 @@ func (node subscriptionNodeView) toSingBoxOutbound() map[string]any {
 func (node subscriptionNodeView) shareLine() string {
 	if strings.TrimSpace(node.RawLink) != "" {
 		return strings.TrimSpace(node.RawLink)
+	}
+	if normalizedProtocol(node.Protocol) == "anytls" && strings.TrimSpace(node.UUID) != "" {
+		return fmt.Sprintf("%s://%s@%s:%d?insecure=1&allowInsecure=1#%s", node.shareScheme(), url.QueryEscape(strings.TrimSpace(node.UUID)), node.Address, node.Port, urlQueryEscape(node.Name))
 	}
 	return fmt.Sprintf("%s://%s:%d#%s", node.shareScheme(), node.Address, node.Port, urlQueryEscape(node.Name))
 }

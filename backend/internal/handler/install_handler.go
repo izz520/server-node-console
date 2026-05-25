@@ -211,11 +211,14 @@ func (h *Handler) runInstallTask(taskID uint, nodeID uint, serverID uint, req in
 	}
 	h.appendTaskLog(taskID, "info", "generated install command: "+maskInstallCommand(command, req))
 
-	output, err := h.runServerCommand(server, command)
-	if output != "" {
-		h.appendTaskLog(taskID, "info", output)
-	}
+	output, err := h.runServerCommand(server, command, func(message string) {
+		h.appendTaskLog(taskID, "info", maskInstallCommand(message, req))
+	})
 	if err != nil {
+		h.failInstallTask(taskID, nodeID, err)
+		return
+	}
+	if err := argosbx.DetectInstallFailure(output); err != nil {
 		h.failInstallTask(taskID, nodeID, err)
 		return
 	}
@@ -336,10 +339,9 @@ func (h *Handler) runUninstallTask(taskID uint, nodeID uint, serverID uint) {
 
 	command := argosbx.BuildUninstallCommand()
 	h.appendTaskLog(taskID, "info", "generated uninstall command: "+command)
-	output, err := h.runServerCommand(server, command)
-	if output != "" {
-		h.appendTaskLog(taskID, "info", output)
-	}
+	_, err = h.runServerCommand(server, command, func(message string) {
+		h.appendTaskLog(taskID, "info", message)
+	})
 	if err != nil {
 		h.failUninstallTask(taskID, nodeID, err)
 		return
@@ -400,7 +402,7 @@ func (h *Handler) loadServerForTask(serverID uint) (domain.Server, error) {
 	return server, nil
 }
 
-func (h *Handler) runServerCommand(server domain.Server, command string) (string, error) {
+func (h *Handler) runServerCommand(server domain.Server, command string, onOutput func(string)) (string, error) {
 	encryptor, err := security.NewEncryptor(h.encryptionKey)
 	if err != nil {
 		return "", err
@@ -409,7 +411,7 @@ func (h *Handler) runServerCommand(server domain.Server, command string) (string
 	if err != nil {
 		return "", err
 	}
-	return sshclient.RunCommand(context.Background(), sshclient.TestRequest{
+	return sshclient.RunCommandWithOutput(context.Background(), sshclient.TestRequest{
 		Host:       req.Host,
 		Port:       req.SSHPort,
 		Username:   req.SSHUsername,
@@ -417,7 +419,7 @@ func (h *Handler) runServerCommand(server domain.Server, command string) (string
 		Password:   req.Password,
 		PrivateKey: req.PrivateKey,
 		Timeout:    30 * time.Minute,
-	}, command)
+	}, command, onOutput)
 }
 
 func (h *Handler) findServerByID(c *gin.Context, userID uint, serverID uint) (domain.Server, bool) {

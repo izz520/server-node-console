@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"server-sing-box-2/backend/internal/domain"
+	"server-sing-box-2/backend/internal/security"
 )
 
 type subscriptionResponse struct {
@@ -188,6 +191,56 @@ func TestSubscriptionRenderingUsesPublicPortAndClientShapes(t *testing.T) {
 	}
 	if !strings.Contains(singPublic.Body.String(), `"outbounds"`) || !strings.Contains(singPublic.Body.String(), `"server_port": 9443`) || !strings.Contains(singPublic.Body.String(), `"type": "hysteria2"`) {
 		t.Fatalf("unexpected sing-box content: %s", singPublic.Body.String())
+	}
+}
+
+func TestSubscriptionRenderingAnyTLSIncludesUUID(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "sub-anytls", "sub-anytls@example.com")
+	db := extractDB(t, nil)
+	uuid := "fa6bcc36-1dbf-4f50-a811-bcd166500708"
+
+	encryptor, err := security.NewEncryptor("test-encryption-key")
+	if err != nil {
+		t.Fatalf("create encryptor: %v", err)
+	}
+	encrypted, err := encryptor.Encrypt(`{"sensitive":"{\"uuid\":\"` + uuid + `\"}"}`)
+	if err != nil {
+		t.Fatalf("encrypt node config: %v", err)
+	}
+
+	node := domain.ProtocolNode{
+		UserID:                 1,
+		Name:                   "🇯🇵 LazyCat-JP-anytls-jplite3-C06xhU",
+		Protocol:               "AnyTLS",
+		ListenPort:             43888,
+		EncryptedProtocolJSON:  encrypted,
+		SubscriptionConfigJSON: `{"address":"172.81.102.192","port":43888}`,
+		InstallMethod:          domain.NodeInstallMethodSystem,
+		Status:                 domain.NodeStatusInstallOK,
+	}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatalf("create anytls node: %v", err)
+	}
+
+	createBody := `{"name":"AnyTLS Subscription","format":"shadowrocket","enabled":true,"nodeIds":[` + strconvUint(node.ID) + `]}`
+	createRes := performRequest(app, http.MethodPost, "/api/v1/subscriptions", createBody, token)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createRes.Code, createRes.Body.String())
+	}
+	var subscription subscriptionResponse
+	if err := json.Unmarshal(createRes.Body.Bytes(), &subscription); err != nil {
+		t.Fatalf("decode subscription response: %v", err)
+	}
+
+	publicRes := performRequest(app, http.MethodGet, subscription.SubscriptionURL, "", "")
+	if publicRes.Code != http.StatusOK {
+		t.Fatalf("expected public status 200, got %d: %s", publicRes.Code, publicRes.Body.String())
+	}
+
+	want := "anytls://" + uuid + "@172.81.102.192:43888?insecure=1&allowInsecure=1#%F0%9F%87%AF%F0%9F%87%B5%20LazyCat-JP-anytls-jplite3-C06xhU"
+	if publicRes.Body.String() != want {
+		t.Fatalf("expected anytls link %q, got %q", want, publicRes.Body.String())
 	}
 }
 

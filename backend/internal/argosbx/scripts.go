@@ -72,11 +72,11 @@ func BuildInstallCommand(params InstallParams) (string, string, error) {
 	}
 
 	prefix := renderVars(values)
-	return strings.TrimSpace(prefix + " " + MainScript), varName, nil
+	return remoteShellCommand(strings.TrimSpace(prefix + " " + MainScript)), varName, nil
 }
 
 func BuildUninstallCommand() string {
-	return MainScript + " del"
+	return remoteShellCommand(MainScript + " del")
 }
 
 func VarNameForProtocol(protocol string) (string, error) {
@@ -96,11 +96,24 @@ func renderVars(values map[string]string) string {
 
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
-		parts = append(parts, fmt.Sprintf(`%s="%s"`, key, shellEscape(values[key])))
+		parts = append(parts, fmt.Sprintf("%s=%s", key, shellSingleQuote(values[key])))
 	}
 	return strings.Join(parts, " ")
 }
 
-func shellEscape(value string) string {
-	return strings.ReplaceAll(value, `"`, `\"`)
+func remoteShellCommand(script string) string {
+	bootstrap := strings.Join([]string{
+		"set -e",
+		"install_pkg() { if command -v apt-get >/dev/null 2>&1; then export DEBIAN_FRONTEND=noninteractive; apt-get update; apt-get install -y \"$@\"; elif command -v apk >/dev/null 2>&1; then apk add --no-cache \"$@\"; elif command -v dnf >/dev/null 2>&1; then dnf install -y \"$@\"; elif command -v yum >/dev/null 2>&1; then yum install -y \"$@\"; elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm \"$@\"; else echo \"missing package manager for required command(s): $*\" >&2; exit 127; fi; }",
+		"missing=\"\"",
+		"command -v bash >/dev/null 2>&1 || missing=\"$missing bash\"",
+		"command -v curl >/dev/null 2>&1 || missing=\"$missing curl\"",
+		"if [ -n \"$missing\" ]; then install_pkg $missing; fi",
+		"exec bash -lc " + shellSingleQuote(script),
+	}, "; ")
+	return "sh -lc " + shellSingleQuote(bootstrap)
+}
+
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
