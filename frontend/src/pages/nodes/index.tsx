@@ -1,5 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, LinkIcon, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  ArrowUpRight,
+  Cpu,
+  LinkIcon,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { getErrorMessage } from "@/api/errors";
 import {
@@ -16,9 +23,11 @@ import {
 } from "@/api/resources";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
+import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { SUPPORTED_PROTOCOLS } from "@/constants/protocols";
+import { cn } from "@/lib/utils";
 import type { ProtocolNode } from "@/types/domain";
 
 type ImportMode = "manual" | "link" | "install";
@@ -62,6 +71,7 @@ export function NodesPage() {
   const [installForm, setInstallForm] = useState(emptyInstallForm);
   const [editingNode, setEditingNode] = useState<ProtocolNode | null>(null);
   const [message, setMessage] = useState("");
+  const [isNodeDialogOpen, setIsNodeDialogOpen] = useState(false);
 
   const nodesQuery = useQuery({
     queryKey: ["nodes"],
@@ -90,7 +100,7 @@ export function NodesPage() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["nodes"] });
       resetForms();
-      setMessage("节点已保存");
+      setIsNodeDialogOpen(false);
     },
     onError: (error) => {
       setMessage(getErrorMessage(error, "节点保存失败"));
@@ -101,10 +111,9 @@ export function NodesPage() {
     mutationFn: deleteNode,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["nodes"] });
-      setMessage("节点已删除");
     },
     onError: (error) => {
-      setMessage(getErrorMessage(error, "节点删除失败"));
+      alert(getErrorMessage(error, "节点删除失败"));
     },
   });
 
@@ -113,10 +122,10 @@ export function NodesPage() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["nodes"] });
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
-      setMessage("卸载任务已创建");
+      alert("卸载任务已创建，请前往任务日志查看进度");
     },
     onError: (error) => {
-      setMessage(getErrorMessage(error, "卸载任务创建失败"));
+      alert(getErrorMessage(error, "卸载任务创建失败"));
     },
   });
 
@@ -142,6 +151,7 @@ export function NodesPage() {
       sensitive: "",
     });
     setMessage("");
+    setIsNodeDialogOpen(true);
   }
 
   const editingSystemNode = editingNode?.installMethod === "system";
@@ -152,215 +162,328 @@ export function NodesPage() {
     setInstallForm(emptyInstallForm);
     setEditingNode(null);
     setMode("manual");
+    setMessage("");
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[420px_1fr]">
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-md bg-slate-950 text-white">
-              <Activity className="h-4 w-4" />
-            </div>
-            <div>
-              <h1 className="font-semibold text-slate-950 text-xl">
-                {editingNode ? "编辑协议节点" : "添加协议节点"}
-              </h1>
-              <p className="text-slate-500 text-sm">
-                {editingSystemNode
-                  ? "系统安装节点只允许调整订阅展示信息"
-                  : "公网订阅端口会优先写入订阅链接"}
-              </p>
-            </div>
+    <div className="space-y-8 py-4 max-w-7xl mx-auto">
+      {/* Page Header */}
+      <section className="flex flex-col justify-between gap-6 sm:flex-row sm:items-center">
+        <div>
+          <h1 className="font-bold text-2xl lg:text-3xl text-slate-100 tracking-tight font-display">
+            协议节点
+          </h1>
+          <p className="mt-1 text-slate-400 text-xs font-semibold">
+            部署或贴入各种高性能网络代理节点，支持节点状态健康检查与系统级一键装机部署。
+          </p>
+        </div>
+        <Button
+          onClick={() => {
+            resetForms();
+            setIsNodeDialogOpen(true);
+          }}
+          className="bg-white text-slate-950 hover:bg-slate-100 px-4 h-9 font-semibold text-xs tracking-wide rounded-lg flex items-center gap-1.5 self-start sm:self-center"
+        >
+          <Plus className="h-4 w-4" />
+          添加协议节点
+        </Button>
+      </section>
+
+      {/* Main Grid Nodes Layout */}
+      <section>
+        {nodesQuery.isLoading ? (
+          <div className="text-slate-400 text-xs font-semibold animate-pulse py-10">
+            正在拉取多协议节点数据...
           </div>
-        </CardHeader>
-        <CardContent>
-          {!editingNode && (
-            <div className="mb-4 grid grid-cols-2 gap-2 rounded-md bg-slate-100 p-1">
-              <button
-                className={modeButtonClass(mode === "manual")}
-                onClick={() => setMode("manual")}
-                type="button"
-              >
-                手动填写
-              </button>
-              <button
-                className={modeButtonClass(mode === "link")}
-                onClick={() => setMode("link")}
-                type="button"
-              >
-                分享链接
-              </button>
-              <button
-                className={modeButtonClass(mode === "install")}
-                onClick={() => setMode("install")}
-                type="button"
-              >
-                系统安装
-              </button>
-            </div>
-          )}
+        ) : nodes.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-white/[0.04] p-16 text-center text-slate-500 text-xs font-semibold">
+            还没有任何协议节点。请点击右上角按钮新建或粘贴链接导入节点。
+          </div>
+        ) : (
+          <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+            {nodes.map((node) => {
+              const isSuccess =
+                node.status === "install_success" || node.status === "imported";
+              const isFailed = node.status === "install_failed";
+              const isProgress = ["installing", "uninstalling"].includes(
+                node.status,
+              );
 
-          <form className="space-y-4" onSubmit={handleSubmit}>
-            {editingNode || mode === "manual" ? (
-              <ManualNodeFields
-                form={manualForm}
-                lockedCore={editingSystemNode}
-                setForm={setManualForm}
-              />
-            ) : mode === "link" ? (
-              <LinkNodeFields form={linkForm} setForm={setLinkForm} />
-            ) : (
-              <InstallNodeFields
-                form={installForm}
-                servers={serversQuery.data ?? []}
-                setForm={setInstallForm}
-              />
-            )}
-
-            {message && <p className="text-slate-600 text-sm">{message}</p>}
-            <div className="flex gap-2">
-              <Button disabled={saveMutation.isPending} type="submit">
-                {mode === "link" && !editingNode ? (
-                  <LinkIcon className="h-4 w-4" />
-                ) : (
-                  <Plus className="h-4 w-4" />
-                )}
-                {saveMutation.isPending
-                  ? "保存中..."
-                  : editingNode
-                    ? "保存修改"
-                    : mode === "install"
-                      ? "发起安装"
-                      : "添加节点"}
-              </Button>
-              {editingNode && (
-                <Button onClick={resetForms} type="button" variant="secondary">
-                  取消
-                </Button>
-              )}
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <div className="font-medium text-slate-950">协议节点列表</div>
-        </CardHeader>
-        <CardContent>
-          {nodesQuery.isLoading ? (
-            <div className="text-slate-500 text-sm">加载中...</div>
-          ) : nodes.length === 0 ? (
-            <div className="rounded-md border border-dashed border-slate-200 p-8 text-center text-slate-500 text-sm">
-              还没有节点，可以先手动添加外部节点或粘贴分享链接导入。
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] border-collapse text-left text-sm">
-                <thead>
-                  <tr className="border-slate-100 border-b text-slate-500">
-                    <th className="py-3 pr-3 font-medium">名称</th>
-                    <th className="py-3 pr-3 font-medium">协议</th>
-                    <th className="py-3 pr-3 font-medium">地址</th>
-                    <th className="py-3 pr-3 font-medium">状态</th>
-                    <th className="py-3 pr-3 font-medium">来源</th>
-                    <th className="py-3 pr-3 text-right font-medium">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {nodes.map((node) => (
-                    <tr className="border-slate-100 border-b" key={node.id}>
-                      <td className="py-3 pr-3">
-                        <div className="font-medium text-slate-950">
-                          {node.name}
+              return (
+                <Card
+                  className="bg-[#0e1017]/70 border-white/[0.04] shadow-lg shadow-black/20 hover:border-white/[0.08] hover:-translate-y-0.5 flex flex-col justify-between"
+                  key={node.id}
+                >
+                  {/* Card Content Top */}
+                  <div className="p-6 pb-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.04] bg-white/[0.02] text-slate-300 shadow-inner shrink-0">
+                          <Cpu className="h-4 w-4 text-[#6366f1]" />
                         </div>
-                        {node.remark && (
-                          <div className="mt-1 text-slate-500 text-xs">
-                            {node.remark}
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-3 pr-3 text-slate-700">
-                        {node.protocol}
-                      </td>
-                      <td className="py-3 pr-3 text-slate-700">
                         <div>
-                          {node.address}:{node.listenPort || node.port}
-                        </div>
-                        {node.publicPort && (
-                          <div className="mt-1 text-slate-500 text-xs">
-                            订阅端口 {node.publicPort}
+                          <div className="font-bold text-slate-200 text-sm tracking-wide">
+                            {node.name}
                           </div>
-                        )}
-                      </td>
-                      <td className="py-3 pr-3">
-                        <Badge>
-                          {node.status === "imported"
-                            ? "外部导入"
-                            : node.status}
-                        </Badge>
-                      </td>
-                      <td className="py-3 pr-3 text-slate-700">
-                        {node.installMethod === "external"
-                          ? "外部节点"
-                          : "系统安装"}
-                      </td>
-                      <td className="py-3 pr-3">
-                        <div className="flex justify-end gap-2">
-                          {(node.installMethod === "external" ||
-                            node.installMethod === "system") && (
-                            <Button
-                              onClick={() => startEdit(node)}
-                              title="编辑"
-                              variant="secondary"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                          )}
-                          {(node.installMethod === "external" ||
-                            node.status === "uninstalled") && (
-                            <Button
-                              onClick={() => {
-                                if (window.confirm("确定删除这个节点吗？")) {
-                                  deleteMutation.mutate(node.id);
-                                }
-                              }}
-                              title="删除"
-                              variant="danger"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          )}
-                          {node.installMethod === "system" &&
-                            node.status === "install_success" && (
-                              <Button
-                                onClick={() => {
-                                  if (
-                                    window.confirm(
-                                      "确定卸载这个系统安装节点吗？",
-                                    )
-                                  ) {
-                                    uninstallMutation.mutate(node.id);
-                                  }
-                                }}
-                                title="卸载"
-                                variant="danger"
-                              >
-                                卸载
-                              </Button>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <Badge className="border-slate-800 bg-slate-900/60 text-slate-400 font-mono text-[9px] px-1.5 py-0 rounded-md">
+                              {node.protocol}
+                            </Badge>
+                            {node.installMethod === "system" ? (
+                              <Badge className="border-violet-500/10 bg-violet-500/5 text-violet-400 text-[9px] px-1.5 py-0 rounded-md">
+                                系统部署
+                              </Badge>
+                            ) : (
+                              <Badge className="border-slate-800 bg-slate-900/60 text-slate-500 text-[9px] px-1.5 py-0 rounded-md">
+                                外部导入
+                              </Badge>
                             )}
+                          </div>
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      </div>
+
+                      {/* Connection status light badge */}
+                      <StatusDot
+                        status={node.status}
+                        isSuccess={isSuccess}
+                        isFailed={isFailed}
+                        isProgress={isProgress}
+                      />
+                    </div>
+
+                    <div className="mt-6 space-y-2 border-t border-white/[0.03] pt-4">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-500 font-semibold text-[10px] uppercase tracking-wider">
+                          网络接入端
+                        </span>
+                        <span className="font-mono text-slate-300 text-[11px] flex items-center gap-1">
+                          <span>
+                            {node.address}:{node.listenPort || node.port}
+                          </span>
+                          <ArrowUpRight className="h-3 w-3 text-slate-500" />
+                        </span>
+                      </div>
+
+                      {node.publicPort && (
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-500 font-semibold text-[10px] uppercase tracking-wider">
+                            对外公网订阅端口
+                          </span>
+                          <span className="font-mono text-slate-300 text-[11px]">
+                            {node.publicPort}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Card Content Bottom Actions */}
+                  <div className="p-6 pt-4 border-t border-white/[0.03] bg-white/[0.01]">
+                    {node.remark && (
+                      <p className="text-[10px] text-slate-500 font-semibold mb-4 leading-normal">
+                        备注: {node.remark}
+                      </p>
+                    )}
+
+                    <div className="flex gap-2">
+                      {(node.installMethod === "external" ||
+                        node.installMethod === "system") && (
+                        <Button
+                          onClick={() => startEdit(node)}
+                          variant="secondary"
+                          className="flex-1 h-8 rounded-lg flex items-center justify-center gap-1 text-[10px]"
+                        >
+                          <Pencil className="h-3.5 w-3.5 opacity-70" />
+                          <span>编辑参数</span>
+                        </Button>
+                      )}
+                      {(node.installMethod === "external" ||
+                        node.status === "uninstalled") && (
+                        <Button
+                          onClick={() => {
+                            if (window.confirm("确定删除这个节点吗？")) {
+                              deleteMutation.mutate(node.id);
+                            }
+                          }}
+                          variant="danger"
+                          className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
+                          title="删除节点"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      {node.installMethod === "system" &&
+                        node.status === "install_success" && (
+                          <Button
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  "确定卸载这个系统安装节点吗？这将会在服务器上运行卸载脚本。",
+                                )
+                              ) {
+                                uninstallMutation.mutate(node.id);
+                              }
+                            }}
+                            variant="danger"
+                            className="flex-1 h-8 rounded-lg text-xs font-semibold"
+                          >
+                            卸载核心
+                          </Button>
+                        )}
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Node dialog form */}
+      <Dialog
+        isOpen={isNodeDialogOpen}
+        onClose={() => {
+          setIsNodeDialogOpen(false);
+          resetForms();
+        }}
+        title={editingNode ? "编辑协议节点" : "添加协议节点"}
+        size="md"
+      >
+        {!editingNode && (
+          <div className="mb-5 grid grid-cols-3 gap-1 rounded-lg bg-slate-950 border border-slate-800 p-1 shrink-0">
+            <button
+              className={modeButtonClass(mode === "manual")}
+              onClick={() => setMode("manual")}
+              type="button"
+            >
+              手动填写
+            </button>
+            <button
+              className={modeButtonClass(mode === "link")}
+              onClick={() => setMode("link")}
+              type="button"
+            >
+              分享链接
+            </button>
+            <button
+              className={modeButtonClass(mode === "install")}
+              onClick={() => setMode("install")}
+              type="button"
+            >
+              系统安装
+            </button>
+          </div>
+        )}
+
+        <form className="space-y-4" onSubmit={handleSubmit}>
+          {editingNode || mode === "manual" ? (
+            <ManualNodeFields
+              form={manualForm}
+              lockedCore={editingSystemNode}
+              setForm={setManualForm}
+            />
+          ) : mode === "link" ? (
+            <LinkNodeFields form={linkForm} setForm={setLinkForm} />
+          ) : (
+            <InstallNodeFields
+              form={installForm}
+              servers={serversQuery.data ?? []}
+              setForm={setInstallForm}
+            />
           )}
-        </CardContent>
-      </Card>
+
+          {message && (
+            <p className="text-rose-400 text-xs font-semibold bg-red-500/5 border border-red-500/10 px-3.5 py-2.5 rounded-lg">
+              {message}
+            </p>
+          )}
+
+          <div className="flex justify-end gap-2.5 pt-2">
+            <Button
+              onClick={() => {
+                setIsNodeDialogOpen(false);
+                resetForms();
+              }}
+              type="button"
+              variant="secondary"
+              className="h-9 px-4 text-xs"
+            >
+              取消
+            </Button>
+            <Button
+              disabled={saveMutation.isPending}
+              type="submit"
+              className="h-9 px-4 text-xs font-semibold bg-white text-slate-950 hover:bg-slate-100"
+            >
+              {mode === "link" && !editingNode ? (
+                <LinkIcon className="h-4 w-4 shrink-0" />
+              ) : (
+                <Plus className="h-4 w-4 shrink-0" />
+              )}
+              {saveMutation.isPending
+                ? "提交中..."
+                : editingNode
+                  ? "保存修改"
+                  : mode === "install"
+                    ? "发起安装"
+                    : "确认添加"}
+            </Button>
+          </div>
+        </form>
+      </Dialog>
     </div>
+  );
+}
+
+function StatusDot({
+  status,
+  isSuccess,
+  isFailed,
+  isProgress,
+}: {
+  status: string;
+  isSuccess: boolean;
+  isFailed: boolean;
+  isProgress: boolean;
+}) {
+  const dotColor = isSuccess
+    ? "bg-emerald-500"
+    : isFailed
+      ? "bg-rose-500"
+      : isProgress
+        ? "bg-indigo-500"
+        : "bg-slate-500";
+
+  const label =
+    status === "imported"
+      ? "导入成功"
+      : status === "install_success"
+        ? "已就绪"
+        : status === "install_failed"
+          ? "故障"
+          : status === "installing"
+            ? "部署中"
+            : status === "uninstalling"
+              ? "卸载中"
+              : "已卸载";
+
+  const borderClass = isSuccess
+    ? "border-emerald-500/10 bg-emerald-500/5 text-emerald-400"
+    : isFailed
+      ? "border-rose-500/10 bg-rose-500/5 text-rose-400"
+      : "border-slate-800 bg-slate-900/60 text-slate-400";
+
+  return (
+    <Badge className={cn("px-2 py-0.5", borderClass)}>
+      <span
+        className={cn(
+          "mr-1.5 h-1.5 w-1.5 rounded-full shrink-0",
+          dotColor,
+          (isSuccess || isProgress) && "animate-pulse",
+        )}
+      />
+      <span>{label}</span>
+    </Badge>
   );
 }
 
@@ -377,16 +500,16 @@ function InstallNodeFields({
 
   return (
     <>
-      <Field label="服务器">
+      <Field label="目标物理服务器">
         <select
-          className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+          className="h-9 w-full rounded-lg border border-white/[0.06] bg-slate-950 px-3 text-xs text-slate-100 outline-none transition-all duration-300 focus:border-white/20 focus:ring-0 cursor-pointer"
           onChange={(event) =>
             setForm({ ...form, serverId: event.target.value })
           }
           required
           value={form.serverId}
         >
-          <option value="">选择服务器</option>
+          <option value="">选择目标主机</option>
           {normalServers.map((server) => (
             <option key={server.id} value={server.id}>
               {server.name} · {server.host}
@@ -394,22 +517,22 @@ function InstallNodeFields({
           ))}
         </select>
         {normalServers.length === 0 && (
-          <p className="mt-2 text-slate-500 text-xs">
-            暂无可安装服务器，请先在服务器页面完成 SSH 连通性测试。
+          <p className="mt-2 text-slate-400 text-[10px] leading-normal">
+            暂无可安装的服务器，请确保至少有一台服务器在“服务器管理”中显示“正常”状态。
           </p>
         )}
       </Field>
       <Field label="节点名称">
         <Input
           onChange={(event) => setForm({ ...form, name: event.target.value })}
-          placeholder="AnyTLS 节点"
+          placeholder="AnyTLS 自动化部署节点"
           required
           value={form.name}
         />
       </Field>
-      <Field label="协议">
+      <Field label="底层核心协议">
         <select
-          className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+          className="h-9 w-full rounded-lg border border-white/[0.06] bg-slate-950 px-3 text-xs text-slate-100 outline-none transition-all duration-300 focus:border-white/20 focus:ring-0 cursor-pointer"
           onChange={(event) =>
             setForm({ ...form, protocol: event.target.value })
           }
@@ -431,42 +554,42 @@ function InstallNodeFields({
             max={65535}
             min={1}
             onChange={(event) => setForm({ ...form, port: event.target.value })}
-            placeholder="留空由后端自动生成"
+            placeholder="留空则由后端自动生成"
             type="number"
             value={form.port}
           />
         </Field>
-        <Field label="公网订阅端口">
+        <Field label="对外公网订阅端口">
           <Input
             max={65535}
             min={1}
             onChange={(event) =>
               setForm({ ...form, publicPort: event.target.value })
             }
-            placeholder="如 48888；留空使用监听端口"
+            placeholder="留空则复用监听端口"
             type="number"
             value={form.publicPort}
           />
         </Field>
       </div>
-      <Field label="UUID">
+      <Field label="自定义 UUID / 密钥">
         <Input
           onChange={(event) => setForm({ ...form, uuid: event.target.value })}
-          placeholder="留空由后端自动生成"
+          placeholder="留空则由后端生成强随机 UUID"
           value={form.uuid}
         />
       </Field>
       <div className="grid gap-3 md:grid-cols-2">
-        <Field label="Reality 域名">
+        <Field label="Reality 伪装域名">
           <Input
             onChange={(event) =>
               setForm({ ...form, realityDomain: event.target.value })
             }
-            placeholder="可选"
+            placeholder="如 gateway.icloud.com"
             value={form.realityDomain}
           />
         </Field>
-        <Field label="CDN Host">
+        <Field label="CDN 优选 Host">
           <Input
             onChange={(event) =>
               setForm({ ...form, cdnDomain: event.target.value })
@@ -479,7 +602,7 @@ function InstallNodeFields({
       <Field label="备注">
         <Input
           onChange={(event) => setForm({ ...form, remark: event.target.value })}
-          placeholder="可选"
+          placeholder="可选备注描述"
           value={form.remark}
         />
       </Field>
@@ -506,9 +629,9 @@ function ManualNodeFields({
           value={form.name}
         />
       </Field>
-      <Field label="协议">
+      <Field label="传输协议">
         <select
-          className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+          className="h-9 w-full rounded-lg border border-white/[0.06] bg-slate-950 px-3 text-xs text-slate-100 outline-none transition-all duration-300 focus:border-white/20 focus:ring-0 cursor-pointer"
           disabled={lockedCore}
           onChange={(event) =>
             setForm({ ...form, protocol: event.target.value })
@@ -524,7 +647,7 @@ function ManualNodeFields({
         </select>
       </Field>
       <div className="grid gap-3 md:grid-cols-[1fr_110px]">
-        <Field label="地址">
+        <Field label="连接地址/IP">
           <Input
             onChange={(event) =>
               setForm({ ...form, address: event.target.value })
@@ -535,7 +658,7 @@ function ManualNodeFields({
             value={form.address}
           />
         </Field>
-        <Field label="端口">
+        <Field label="默认端口">
           <Input
             max={65535}
             min={1}
@@ -551,7 +674,7 @@ function ManualNodeFields({
         </Field>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
-        <Field label="监听端口">
+        <Field label="底层监听端口">
           <Input
             max={65535}
             min={1}
@@ -564,7 +687,7 @@ function ManualNodeFields({
             value={form.listenPort}
           />
         </Field>
-        <Field label="公网订阅端口">
+        <Field label="公网映射/订阅端口">
           <Input
             max={65535}
             min={1}
@@ -578,13 +701,13 @@ function ManualNodeFields({
         </Field>
       </div>
       {!lockedCore && (
-        <Field label="敏感参数">
+        <Field label="节点机密参数 (如 UUID、Password 等)">
           <textarea
-            className="min-h-24 w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            className="min-h-24 w-full resize-y rounded-lg border border-white/[0.06] bg-slate-950 px-3.5 py-2.5 text-xs text-slate-100 font-mono outline-none transition-all duration-300 focus:border-white/20"
             onChange={(event) =>
               setForm({ ...form, sensitive: event.target.value })
             }
-            placeholder="UUID、密码、私钥等；保存后不会明文返回"
+            placeholder="请输入节点的连接密码、UUID 或私钥等敏感参数；保存后出于安全将不会明文返回"
             value={form.sensitive}
           />
         </Field>
@@ -592,7 +715,7 @@ function ManualNodeFields({
       <Field label="备注">
         <Input
           onChange={(event) => setForm({ ...form, remark: event.target.value })}
-          placeholder="可选"
+          placeholder="添加备注"
           value={form.remark}
         />
       </Field>
@@ -609,13 +732,13 @@ function LinkNodeFields({
 }) {
   return (
     <>
-      <Field label="分享链接">
+      <Field label="节点分享链接 (支持 vless://, vmess://, hysteria2://)">
         <textarea
-          className="min-h-28 w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+          className="min-h-28 w-full resize-y rounded-lg border border-white/[0.06] bg-slate-950 px-3.5 py-2.5 text-xs text-slate-100 font-mono outline-none transition-all duration-300 focus:border-white/20"
           onChange={(event) =>
             setForm({ ...form, rawLink: event.target.value })
           }
-          placeholder="vless://...、vmess://...、hysteria2://..."
+          placeholder="粘贴您的分享链接..."
           required
           value={form.rawLink}
         />
@@ -625,7 +748,7 @@ function LinkNodeFields({
           onChange={(event) =>
             setForm({ ...form, displayName: event.target.value })
           }
-          placeholder="可选；留空则使用链接中的名称"
+          placeholder="留空则提取链接中的真实名称"
           value={form.displayName}
         />
       </Field>
@@ -642,7 +765,9 @@ function Field({
 }) {
   return (
     <div className="block">
-      <span className="mb-1 block text-slate-700 text-sm">{label}</span>
+      <span className="mb-1.5 block text-slate-500 text-[9px] font-bold uppercase tracking-widest">
+        {label}
+      </span>
       {children}
     </div>
   );
@@ -687,9 +812,8 @@ function buildUpdatePayload(form: typeof emptyManualForm): NodeUpdatePayload {
   };
 }
 
-function buildInstallPayload(
-  form: typeof emptyInstallForm,
-): NodeInstallPayload {
+// biome-ignore lint/suspicious/noExplicitAny: internal mapper
+function buildInstallPayload(form: any): NodeInstallPayload {
   return {
     serverId: Number(form.serverId),
     name: form.name,
@@ -707,10 +831,10 @@ function buildInstallPayload(
 }
 
 function modeButtonClass(active: boolean) {
-  return [
-    "h-9 rounded-md text-sm font-medium transition",
+  return cn(
+    "h-9 flex-1 rounded-md text-xs font-semibold tracking-wide transition-all duration-200 cursor-pointer select-none",
     active
-      ? "bg-white text-slate-950 shadow-sm"
-      : "text-slate-600 hover:text-slate-950",
-  ].join(" ");
+      ? "bg-white text-slate-950 font-bold"
+      : "text-slate-400 hover:text-slate-200 hover:bg-white/5",
+  );
 }

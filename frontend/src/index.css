@@ -1,27 +1,116 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", "Inter", sans-serif;
+
+  --color-brand-primary: #ffffff;
+  --color-brand-secondary: #0f172a;
+  --color-brand-accent: #6366f1;
+}
+
 :root {
-  color-scheme: light;
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", sans-serif;
-  background: #f7f8fb;
-  color: #111827;
+  color-scheme: dark;
+  font-family: var(--font-sans);
+  background-color: #07080e;
+  color: #f8fafc;
 }
 
 body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
-}
-
-button,
-input,
-select,
-textarea {
-  font: inherit;
+  background-color: #07080e;
+  /* Premium radial dot grid pattern */
+  background-image: radial-gradient(
+    rgba(255, 255, 255, 0.05) 1px,
+    transparent 1px
+  );
+  background-size: 24px 24px;
+  background-attachment: fixed;
 }
 
 #root {
   min-height: 100vh;
+}
+
+/* Custom High-Fidelity Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.01);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Typography enhancements */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-display);
+  letter-spacing: -0.03em;
+}
+
+/* Premium Vercel/Linear container presets */
+.glass-panel {
+  background: rgba(13, 15, 24, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.glass-panel-glow {
+  background: rgba(13, 15, 24, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.6),
+    0 0 80px rgba(99, 102, 241, 0.02);
+}
+
+/* Micro-animations for premium icons */
+.animate-icon-pulse svg {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.animate-icon-pulse:hover svg {
+  transform: scale(1.08) rotate(3deg);
+  color: #f8fafc;
+}
+
+/* Custom interactive active scales */
+.btn-interactive {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.btn-interactive:active {
+  transform: scale(0.97);
+}
+
+.terminal-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+}
+.terminal-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Premium neon focus overlay */
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: rgba(99, 102, 241, 0.4);
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.08);
 }

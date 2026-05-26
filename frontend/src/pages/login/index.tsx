@@ -33,24 +33,33 @@ export function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-      <Card className="w-full max-w-sm">
-        <CardContent className="p-6">
-          <div className="mb-6 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-md bg-slate-950 text-white">
-              <LockKeyhole className="h-5 w-5" />
+    <main className="relative flex min-h-screen items-center justify-center bg-[#07080e] px-4 overflow-hidden">
+      {/* High-End Background Dots */}
+      <div className="absolute inset-0 bg-[radial-gradient(rgba(255,255,255,0.05)_1px,transparent_1px)] [background-size:24px_24px] pointer-events-none" />
+
+      {/* Subtle Space Glow Orbs */}
+      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 h-[380px] w-[380px] rounded-full bg-indigo-500/5 blur-[120px] pointer-events-none" />
+
+      <Card className="relative z-10 w-full max-w-sm border-white/[0.04] bg-[#0d0f18]/85 backdrop-blur-md shadow-[0_20px_50px_rgba(0,0,0,0.6)]">
+        <CardContent className="p-8">
+          <div className="mb-8 flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.08] bg-slate-900 text-slate-100 shadow-inner shrink-0">
+              <LockKeyhole className="h-4 w-4 text-[#6366f1]" />
             </div>
             <div>
-              <h1 className="font-semibold text-lg text-slate-950">
+              <h1 className="font-bold text-slate-100 text-base tracking-tight font-display">
                 {APP_NAME}
               </h1>
-              <p className="text-slate-500 text-sm">登录后管理服务器和订阅</p>
+              <p className="text-slate-500 text-[10px] font-semibold uppercase tracking-wider mt-0.5">
+                Multi-Node Core Console
+              </p>
             </div>
           </div>
+
           <form className="space-y-4" onSubmit={handleSubmit}>
             <label className="block" htmlFor="account">
-              <span className="mb-1 block text-slate-700 text-sm">
-                用户名或邮箱
+              <span className="mb-1.5 block text-slate-500 text-[9px] font-bold uppercase tracking-widest">
+                用户名或电子邮箱
               </span>
               <Input
                 autoComplete="username"
@@ -62,26 +71,39 @@ export function LoginPage() {
               />
             </label>
             <label className="block" htmlFor="password">
-              <span className="mb-1 block text-slate-700 text-sm">密码</span>
+              <span className="mb-1.5 block text-slate-500 text-[9px] font-bold uppercase tracking-widest">
+                密码
+              </span>
               <Input
                 autoComplete="current-password"
                 id="password"
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="请输入密码"
+                placeholder="请输入登录密码"
                 required
                 type="password"
                 value={password}
               />
             </label>
-            {error && <p className="text-red-600 text-sm">{error}</p>}
-            <Button className="w-full" disabled={isSubmitting} type="submit">
-              {isSubmitting ? "登录中..." : "登录"}
+
+            {error && (
+              <p className="text-rose-400 text-xs font-semibold bg-red-500/5 border border-red-500/10 px-3.5 py-2 rounded-lg">
+                {error}
+              </p>
+            )}
+
+            <Button
+              className="w-full mt-3 h-10 bg-white text-slate-950 hover:bg-slate-100 font-bold"
+              disabled={isSubmitting}
+              type="submit"
+            >
+              {isSubmitting ? "正在验证凭据..." : "安全登录系统"}
             </Button>
           </form>
-          <p className="mt-4 text-slate-500 text-xs">
-            还没有账号？{" "}
+
+          <p className="mt-6 text-slate-500 text-[11px] font-semibold text-center">
+            还没有系统账号？{" "}
             <Link
-              className="font-medium text-slate-950 hover:underline"
+              className="font-bold text-slate-200 hover:text-white hover:underline transition-all duration-200"
               to="/register"
             >
               注册新账号
