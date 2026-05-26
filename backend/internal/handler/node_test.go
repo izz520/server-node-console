@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"server-sing-box-2/backend/internal/domain"
@@ -16,6 +17,7 @@ type nodeResponse struct {
 	Address       string `json:"address"`
 	Port          int    `json:"port"`
 	ListenPort    int    `json:"listenPort"`
+	PublicPort    *int   `json:"publicPort"`
 	InstallMethod string `json:"installMethod"`
 	Status        string `json:"status"`
 	HasSensitive  bool   `json:"hasSensitive"`
@@ -173,6 +175,76 @@ func TestDeleteNodeRejectsInstalledSystemNode(t *testing.T) {
 	deleteRes := performRequest(app, http.MethodDelete, "/api/v1/nodes/"+strconvUint(node.ID), "", token)
 	if deleteRes.Code != http.StatusBadRequest {
 		t.Fatalf("expected delete installed system node status 400, got %d: %s", deleteRes.Code, deleteRes.Body.String())
+	}
+}
+
+func TestUpdateSystemNodeAllowsSubscriptionPortOnly(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "node-system-update", "node-system-update@example.com")
+	server := createTestServer(t, app, token, "System Update Server")
+	db := extractDB(t, app)
+
+	node := domain.ProtocolNode{
+		UserID:                 server.UserID,
+		ServerID:               &server.ID,
+		Name:                   "Installed System Node",
+		Protocol:               "AnyTLS",
+		ListenPort:             43888,
+		SubscriptionConfigJSON: `{"address":"172.81.102.192","port":43888,"generatedFrom":"argosbx"}`,
+		InstallMethod:          domain.NodeInstallMethodSystem,
+		Status:                 domain.NodeStatusInstallOK,
+	}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatalf("create system node: %v", err)
+	}
+
+	updateBody := `{"name":"Installed System Node","protocol":"AnyTLS","address":"172.81.102.192","port":43888,"listenPort":43888,"publicPort":48888,"remark":"nat mapped"}`
+	updateRes := performRequest(app, http.MethodPut, "/api/v1/nodes/"+strconvUint(node.ID), updateBody, token)
+	if updateRes.Code != http.StatusOK {
+		t.Fatalf("expected system node update status 200, got %d: %s", updateRes.Code, updateRes.Body.String())
+	}
+
+	var updated nodeResponse
+	if err := json.Unmarshal(updateRes.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updated.PublicPort == nil || *updated.PublicPort != 48888 {
+		t.Fatalf("expected public port 48888, got %+v", updated)
+	}
+
+	var stored domain.ProtocolNode
+	if err := db.First(&stored, node.ID).Error; err != nil {
+		t.Fatalf("load stored node: %v", err)
+	}
+	if !strings.Contains(stored.SubscriptionConfigJSON, `"generatedFrom":"argosbx"`) {
+		t.Fatalf("expected generatedFrom to be preserved, got %s", stored.SubscriptionConfigJSON)
+	}
+}
+
+func TestUpdateSystemNodeRejectsCoreSettingChanges(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "node-system-core", "node-system-core@example.com")
+	server := createTestServer(t, app, token, "System Core Server")
+	db := extractDB(t, app)
+
+	node := domain.ProtocolNode{
+		UserID:                 server.UserID,
+		ServerID:               &server.ID,
+		Name:                   "Installed System Node",
+		Protocol:               "AnyTLS",
+		ListenPort:             43888,
+		SubscriptionConfigJSON: `{"address":"172.81.102.192","port":43888}`,
+		InstallMethod:          domain.NodeInstallMethodSystem,
+		Status:                 domain.NodeStatusInstallOK,
+	}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatalf("create system node: %v", err)
+	}
+
+	updateBody := `{"name":"Installed System Node","protocol":"AnyTLS","address":"172.81.102.192","port":43889,"listenPort":43889,"publicPort":48888}`
+	updateRes := performRequest(app, http.MethodPut, "/api/v1/nodes/"+strconvUint(node.ID), updateBody, token)
+	if updateRes.Code != http.StatusBadRequest {
+		t.Fatalf("expected system node core update status 400, got %d: %s", updateRes.Code, updateRes.Body.String())
 	}
 }
 

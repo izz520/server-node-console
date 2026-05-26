@@ -138,10 +138,6 @@ func (h *Handler) UpdateNode(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if node.InstallMethod != domain.NodeInstallMethodExternal {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "only external nodes can be edited in this version"})
-		return
-	}
 
 	var req nodeUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -164,6 +160,11 @@ func (h *Handler) UpdateNode(c *gin.Context) {
 	}
 	if err := normalized.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if node.InstallMethod == domain.NodeInstallMethodSystem {
+		h.updateSystemNodeSubscriptionSettings(c, node, normalized)
 		return
 	}
 
@@ -191,6 +192,62 @@ func (h *Handler) UpdateNode(c *gin.Context) {
 
 	h.logOperation(&node.UserID, "node.update", "node", map[string]any{"nodeId": node.ID, "name": node.Name})
 	c.JSON(http.StatusOK, toNodeResponse(node))
+}
+
+func (h *Handler) updateSystemNodeSubscriptionSettings(c *gin.Context, node domain.ProtocolNode, normalized normalizedNodePayload) {
+	config := nodeConfig{}
+	_ = json.Unmarshal([]byte(node.SubscriptionConfigJSON), &config)
+	listenPort := normalized.ListenPort
+	if listenPort == 0 {
+		listenPort = normalized.Port
+	}
+	if normalized.Protocol != node.Protocol ||
+		normalized.Address != config.Address ||
+		normalized.Port != config.Port ||
+		listenPort != node.ListenPort {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "system installed node core settings cannot be edited"})
+		return
+	}
+
+	config.Remark = normalized.Remark
+	node.Name = normalized.Name
+	node.PublicPort = normalized.PublicPort
+	node.SubscriptionConfigJSON = updateNodeConfigJSON(node.SubscriptionConfigJSON, config)
+
+	if err := h.db.Save(&node).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "update node failed"})
+		return
+	}
+
+	h.logOperation(&node.UserID, "node.update", "node", map[string]any{"nodeId": node.ID, "name": node.Name})
+	c.JSON(http.StatusOK, toNodeResponse(node))
+}
+
+func updateNodeConfigJSON(current string, config nodeConfig) string {
+	values := map[string]any{}
+	_ = json.Unmarshal([]byte(current), &values)
+	values["address"] = config.Address
+	values["port"] = config.Port
+	if config.Remark == "" {
+		delete(values, "remark")
+	} else {
+		values["remark"] = config.Remark
+	}
+	if config.RawLink == "" {
+		delete(values, "rawLink")
+	} else {
+		values["rawLink"] = config.RawLink
+	}
+	if config.ConfigJSON == "" {
+		delete(values, "configJson")
+	} else {
+		values["configJson"] = config.ConfigJSON
+	}
+	data, err := json.Marshal(values)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
 }
 
 func (h *Handler) DeleteNode(c *gin.Context) {

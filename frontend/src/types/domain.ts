@@ -71,11 +71,23 @@ export interface Subscription {
   name: string;
   enabled: boolean;
   format: string;
+  clashTemplate?: string;
+  clashTemplateId?: number | null;
   nodeIds: number[];
   nodeCount: number;
   token?: string;
   subscriptionUrl?: string;
   remark?: string;
+}
+
+export interface ClashTemplate {
+  id: number;
+  userId: number;
+  name: string;
+  content: string;
+  remark?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Task {

@@ -17,10 +17,18 @@ type subscriptionResponse struct {
 	Name            string `json:"name"`
 	Enabled         bool   `json:"enabled"`
 	Format          string `json:"format"`
+	ClashTemplate   string `json:"clashTemplate"`
+	ClashTemplateID *uint  `json:"clashTemplateId"`
 	NodeIDs         []uint `json:"nodeIds"`
 	NodeCount       int    `json:"nodeCount"`
 	Token           string `json:"token"`
 	SubscriptionURL string `json:"subscriptionUrl"`
+}
+
+type clashTemplateResponse struct {
+	ID      uint   `json:"id"`
+	Name    string `json:"name"`
+	Content string `json:"content"`
 }
 
 func TestSubscriptionCRUDPublicAccessAndReset(t *testing.T) {
@@ -172,7 +180,13 @@ func TestSubscriptionRenderingUsesPublicPortAndClientShapes(t *testing.T) {
 	if clashPublic.Code != http.StatusOK {
 		t.Fatalf("expected clash public status 200, got %d: %s", clashPublic.Code, clashPublic.Body.String())
 	}
-	if !strings.Contains(clashPublic.Body.String(), "proxies:") || !strings.Contains(clashPublic.Body.String(), "port: 9443") || !strings.Contains(clashPublic.Body.String(), `type: "hysteria2"`) {
+	if !strings.Contains(clashPublic.Body.String(), "mixed-port: 7890") ||
+		!strings.Contains(clashPublic.Body.String(), "proxies:") ||
+		!strings.Contains(clashPublic.Body.String(), "proxy-groups:") ||
+		!strings.Contains(clashPublic.Body.String(), "rules:") ||
+		!strings.Contains(clashPublic.Body.String(), "port: 9443") ||
+		!strings.Contains(clashPublic.Body.String(), `type: "hysteria2"`) ||
+		!strings.Contains(clashPublic.Body.String(), `- "NAT Node"`) {
 		t.Fatalf("unexpected clash content: %s", clashPublic.Body.String())
 	}
 
@@ -241,6 +255,131 @@ func TestSubscriptionRenderingAnyTLSIncludesUUID(t *testing.T) {
 	want := "anytls://" + uuid + "@172.81.102.192:43888?insecure=1&allowInsecure=1#%F0%9F%87%AF%F0%9F%87%B5%20LazyCat-JP-anytls-jplite3-C06xhU"
 	if publicRes.Body.String() != want {
 		t.Fatalf("expected anytls link %q, got %q", want, publicRes.Body.String())
+	}
+}
+
+func TestSubscriptionRenderingClashAnyTLSIncludesPassword(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "sub-clash-anytls", "sub-clash-anytls@example.com")
+	db := extractDB(t, nil)
+	uuid := "fa6bcc36-1dbf-4f50-a811-bcd166500708"
+
+	encryptor, err := security.NewEncryptor("test-encryption-key")
+	if err != nil {
+		t.Fatalf("create encryptor: %v", err)
+	}
+	encrypted, err := encryptor.Encrypt(`{"sensitive":"{\"uuid\":\"` + uuid + `\"}"}`)
+	if err != nil {
+		t.Fatalf("encrypt node config: %v", err)
+	}
+
+	node := domain.ProtocolNode{
+		UserID:                 1,
+		Name:                   "AnyTLS Clash Node",
+		Protocol:               "AnyTLS",
+		ListenPort:             43888,
+		EncryptedProtocolJSON:  encrypted,
+		SubscriptionConfigJSON: `{"address":"172.81.102.192","port":43888}`,
+		InstallMethod:          domain.NodeInstallMethodSystem,
+		Status:                 domain.NodeStatusInstallOK,
+	}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatalf("create anytls node: %v", err)
+	}
+
+	createBody := `{"name":"Clash AnyTLS","format":"clash-mihomo","enabled":true,"nodeIds":[` + strconvUint(node.ID) + `]}`
+	createRes := performRequest(app, http.MethodPost, "/api/v1/subscriptions", createBody, token)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createRes.Code, createRes.Body.String())
+	}
+	var subscription subscriptionResponse
+	if err := json.Unmarshal(createRes.Body.Bytes(), &subscription); err != nil {
+		t.Fatalf("decode subscription response: %v", err)
+	}
+
+	publicRes := performRequest(app, http.MethodGet, subscription.SubscriptionURL, "", "")
+	if publicRes.Code != http.StatusOK {
+		t.Fatalf("expected public status 200, got %d: %s", publicRes.Code, publicRes.Body.String())
+	}
+	body := publicRes.Body.String()
+	if !strings.Contains(body, `type: "anytls"`) ||
+		!strings.Contains(body, `password: "`+uuid+`"`) ||
+		!strings.Contains(body, "proxy-groups:") ||
+		!strings.Contains(body, "rules:") {
+		t.Fatalf("unexpected clash anytls content: %s", body)
+	}
+}
+
+func TestSubscriptionRenderingClashTemplateSelection(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "sub-clash-template", "sub-clash-template@example.com")
+	node := importTestNode(t, app, token, "Template Node")
+
+	createBody := `{"name":"Global Clash","format":"clash-mihomo","clashTemplate":"global-proxy","enabled":true,"nodeIds":[` + strconvUint(node.ID) + `]}`
+	createRes := performRequest(app, http.MethodPost, "/api/v1/subscriptions", createBody, token)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createRes.Code, createRes.Body.String())
+	}
+	var subscription subscriptionResponse
+	if err := json.Unmarshal(createRes.Body.Bytes(), &subscription); err != nil {
+		t.Fatalf("decode subscription response: %v", err)
+	}
+	if subscription.ClashTemplate != "global-proxy" {
+		t.Fatalf("expected global-proxy template, got %+v", subscription)
+	}
+
+	publicRes := performRequest(app, http.MethodGet, subscription.SubscriptionURL, "", "")
+	if publicRes.Code != http.StatusOK {
+		t.Fatalf("expected public status 200, got %d: %s", publicRes.Code, publicRes.Body.String())
+	}
+	body := publicRes.Body.String()
+	if !strings.Contains(body, "mode: global") ||
+		strings.Contains(body, "GEOIP,CN,DIRECT") ||
+		!strings.Contains(body, "  - MATCH,PROXY") {
+		t.Fatalf("unexpected global clash template content: %s", body)
+	}
+}
+
+func TestSubscriptionRenderingCustomClashTemplate(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "sub-custom-clash", "sub-custom-clash@example.com")
+	node := importTestNode(t, app, token, "Custom Node")
+
+	templateContent := "mixed-port: 7891\nmode: rule\nproxies:\n  - name: old\n    type: direct\nproxy-groups:\n  - name: SELECT\n    type: select\n    proxies:\n      - old\nrules:\n  - MATCH,SELECT"
+	templateBody := `{"name":"Custom Template","content":` + strconv.Quote(templateContent) + `}`
+	templateRes := performRequest(app, http.MethodPost, "/api/v1/clash-templates", templateBody, token)
+	if templateRes.Code != http.StatusCreated {
+		t.Fatalf("expected template create status 201, got %d: %s", templateRes.Code, templateRes.Body.String())
+	}
+	var template clashTemplateResponse
+	if err := json.Unmarshal(templateRes.Body.Bytes(), &template); err != nil {
+		t.Fatalf("decode template response: %v", err)
+	}
+
+	createBody := `{"name":"Custom Clash","format":"clash-mihomo","clashTemplate":"custom","clashTemplateId":` + strconvUint(template.ID) + `,"enabled":true,"nodeIds":[` + strconvUint(node.ID) + `]}`
+	createRes := performRequest(app, http.MethodPost, "/api/v1/subscriptions", createBody, token)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createRes.Code, createRes.Body.String())
+	}
+	var subscription subscriptionResponse
+	if err := json.Unmarshal(createRes.Body.Bytes(), &subscription); err != nil {
+		t.Fatalf("decode subscription response: %v", err)
+	}
+	if subscription.ClashTemplate != "custom" || subscription.ClashTemplateID == nil || *subscription.ClashTemplateID != template.ID {
+		t.Fatalf("unexpected subscription template: %+v", subscription)
+	}
+
+	publicRes := performRequest(app, http.MethodGet, subscription.SubscriptionURL, "", "")
+	if publicRes.Code != http.StatusOK {
+		t.Fatalf("expected public status 200, got %d: %s", publicRes.Code, publicRes.Body.String())
+	}
+	body := publicRes.Body.String()
+	if !strings.Contains(body, "mixed-port: 7891") ||
+		!strings.Contains(body, `name: "Custom Node"`) ||
+		strings.Contains(body, "name: old") ||
+		!strings.Contains(body, `      - "Custom Node"`) ||
+		!strings.Contains(body, "rules:") {
+		t.Fatalf("unexpected custom clash template content: %s", body)
 	}
 }
 

@@ -1,5 +1,6 @@
 import { request } from "@/api/request";
 import type {
+  ClashTemplate,
   NATPortMapping,
   OperationLog,
   ProtocolNode,
@@ -52,6 +53,7 @@ export interface NodeInstallPayload {
   name: string;
   protocol: string;
   port?: number;
+  publicPort?: number | null;
   uuid?: string;
   realityDomain?: string;
   cdnDomain?: string;
@@ -77,8 +79,16 @@ export interface NodeUpdatePayload {
 export interface SubscriptionPayload {
   name: string;
   format: string;
+  clashTemplate?: string;
+  clashTemplateId?: number | null;
   enabled: boolean;
   nodeIds: number[];
+  remark?: string;
+}
+
+export interface ClashTemplatePayload {
+  name: string;
+  content: string;
   remark?: string;
 }
 
@@ -202,6 +212,34 @@ export async function resetSubscriptionToken(id: number) {
     `/subscriptions/${id}/reset-token`,
   );
   return data;
+}
+
+export async function listClashTemplates() {
+  const { data } = await request.get<ClashTemplate[]>("/clash-templates");
+  return data;
+}
+
+export async function createClashTemplate(payload: ClashTemplatePayload) {
+  const { data } = await request.post<ClashTemplate>(
+    "/clash-templates",
+    payload,
+  );
+  return data;
+}
+
+export async function updateClashTemplate(
+  id: number,
+  payload: ClashTemplatePayload,
+) {
+  const { data } = await request.put<ClashTemplate>(
+    `/clash-templates/${id}`,
+    payload,
+  );
+  return data;
+}
+
+export async function deleteClashTemplate(id: number) {
+  await request.delete(`/clash-templates/${id}`);
 }
 
 export async function listTasks() {

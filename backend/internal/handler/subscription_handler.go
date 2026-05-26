@@ -22,11 +22,13 @@ import (
 )
 
 type subscriptionRequest struct {
-	Name    string                    `json:"name" binding:"required,max=120"`
-	Format  domain.SubscriptionFormat `json:"format" binding:"required"`
-	Enabled bool                      `json:"enabled"`
-	NodeIDs []uint                    `json:"nodeIds" binding:"required"`
-	Remark  string                    `json:"remark"`
+	Name            string                    `json:"name" binding:"required,max=120"`
+	Format          domain.SubscriptionFormat `json:"format" binding:"required"`
+	ClashTemplate   string                    `json:"clashTemplate"`
+	ClashTemplateID *uint                     `json:"clashTemplateId"`
+	Enabled         bool                      `json:"enabled"`
+	NodeIDs         []uint                    `json:"nodeIds" binding:"required"`
+	Remark          string                    `json:"remark"`
 }
 
 type subscriptionResponse struct {
@@ -35,6 +37,8 @@ type subscriptionResponse struct {
 	Name            string                    `json:"name"`
 	Enabled         bool                      `json:"enabled"`
 	Format          domain.SubscriptionFormat `json:"format"`
+	ClashTemplate   string                    `json:"clashTemplate"`
+	ClashTemplateID *uint                     `json:"clashTemplateId,omitempty"`
 	NodeIDs         []uint                    `json:"nodeIds"`
 	NodeCount       int                       `json:"nodeCount"`
 	Token           string                    `json:"token,omitempty"`
@@ -53,6 +57,7 @@ type subscriptionNodeView struct {
 	RawLink    string `json:"rawLink,omitempty"`
 	ConfigJSON string `json:"configJson,omitempty"`
 	UUID       string `json:"uuid,omitempty"`
+	Password   string `json:"password,omitempty"`
 }
 
 func (h *Handler) ListSubscriptions(c *gin.Context) {
@@ -109,6 +114,10 @@ func (h *Handler) CreateSubscription(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if err := h.validateClashTemplate(userID, req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	token, tokenHash, encryptedToken, err := h.newSubscriptionToken()
 	if err != nil {
@@ -117,13 +126,15 @@ func (h *Handler) CreateSubscription(c *gin.Context) {
 	}
 
 	subscription := domain.Subscription{
-		UserID:         userID,
-		Name:           req.Name,
-		TokenHash:      tokenHash,
-		EncryptedToken: encryptedToken,
-		Enabled:        req.Enabled,
-		Format:         req.Format,
-		Remark:         req.Remark,
+		UserID:          userID,
+		Name:            req.Name,
+		TokenHash:       tokenHash,
+		EncryptedToken:  encryptedToken,
+		Enabled:         req.Enabled,
+		Format:          req.Format,
+		ClashTemplate:   req.ClashTemplate,
+		ClashTemplateID: req.ClashTemplateID,
+		Remark:          req.Remark,
 	}
 
 	if err := h.db.Transaction(func(tx *gorm.DB) error {
@@ -163,10 +174,16 @@ func (h *Handler) UpdateSubscription(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if err := h.validateClashTemplate(subscription.UserID, req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	subscription.Name = req.Name
 	subscription.Enabled = req.Enabled
 	subscription.Format = req.Format
+	subscription.ClashTemplate = req.ClashTemplate
+	subscription.ClashTemplateID = req.ClashTemplateID
 	subscription.Remark = req.Remark
 
 	if err := h.db.Transaction(func(tx *gorm.DB) error {
@@ -266,7 +283,12 @@ func (h *Handler) PublicSubscription(c *gin.Context) {
 		return
 	}
 
-	content, contentType, err := renderSubscription(subscription.Format, nodes)
+	customClashTemplate, err := h.subscriptionClashTemplateContent(subscription)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "load clash template failed"})
+		return
+	}
+	content, contentType, err := renderSubscription(subscription.Format, subscription.ClashTemplate, customClashTemplate, nodes)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -317,6 +339,38 @@ func (h *Handler) validateSubscriptionNodes(userID uint, nodeIDs []uint) error {
 	return nil
 }
 
+func (h *Handler) validateClashTemplate(userID uint, req subscriptionRequest) error {
+	if req.Format != domain.SubscriptionFormatClashMihomo || req.ClashTemplate != "custom" {
+		return nil
+	}
+	if req.ClashTemplateID == nil || *req.ClashTemplateID == 0 {
+		return errors.New("clash template is required")
+	}
+	var count int64
+	if err := h.db.Model(&domain.ClashTemplate{}).
+		Where("id = ? AND user_id = ?", *req.ClashTemplateID, userID).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return errors.New("clash template not found")
+	}
+	return nil
+}
+
+func (h *Handler) subscriptionClashTemplateContent(subscription domain.Subscription) (string, error) {
+	if subscription.Format != domain.SubscriptionFormatClashMihomo ||
+		normalizeClashTemplate(subscription.ClashTemplate) != "custom" ||
+		subscription.ClashTemplateID == nil {
+		return "", nil
+	}
+	var template domain.ClashTemplate
+	if err := h.db.Where("id = ? AND user_id = ?", *subscription.ClashTemplateID, subscription.UserID).First(&template).Error; err != nil {
+		return "", err
+	}
+	return template.Content, nil
+}
+
 func (h *Handler) newSubscriptionToken() (string, string, string, error) {
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
@@ -341,16 +395,18 @@ func (h *Handler) toSubscriptionResponse(subscription domain.Subscription, inclu
 	}
 
 	response := subscriptionResponse{
-		ID:        subscription.ID,
-		UserID:    subscription.UserID,
-		Name:      subscription.Name,
-		Enabled:   subscription.Enabled,
-		Format:    subscription.Format,
-		NodeIDs:   nodeIDs,
-		NodeCount: len(nodeIDs),
-		Remark:    subscription.Remark,
-		CreatedAt: subscription.CreatedAt,
-		UpdatedAt: subscription.UpdatedAt,
+		ID:              subscription.ID,
+		UserID:          subscription.UserID,
+		Name:            subscription.Name,
+		Enabled:         subscription.Enabled,
+		Format:          subscription.Format,
+		ClashTemplate:   normalizeClashTemplate(subscription.ClashTemplate),
+		ClashTemplateID: subscription.ClashTemplateID,
+		NodeIDs:         nodeIDs,
+		NodeCount:       len(nodeIDs),
+		Remark:          subscription.Remark,
+		CreatedAt:       subscription.CreatedAt,
+		UpdatedAt:       subscription.UpdatedAt,
 	}
 
 	if includeToken && subscription.EncryptedToken != "" {
@@ -421,6 +477,7 @@ func (h *Handler) subscriptionNodeViews(subscriptionID uint) ([]subscriptionNode
 		if node.PublicPort != nil {
 			port = *node.PublicPort
 		}
+		sensitiveValues := sensitiveByNodeID[node.ID]
 		views = append(views, subscriptionNodeView{
 			Name:       node.Name,
 			Protocol:   node.Protocol,
@@ -429,7 +486,8 @@ func (h *Handler) subscriptionNodeViews(subscriptionID uint) ([]subscriptionNode
 			Remark:     config.Remark,
 			RawLink:    config.RawLink,
 			ConfigJSON: config.ConfigJSON,
-			UUID:       sensitiveByNodeID[node.ID]["uuid"],
+			UUID:       sensitiveValues["uuid"],
+			Password:   firstNonEmpty(sensitiveValues["password"], sensitiveValues["passwd"], sensitiveValues["pass"], sensitiveValues["uuid"]),
 		})
 	}
 	return views, nil
@@ -461,14 +519,35 @@ func (h *Handler) subscriptionNodeSensitiveValues(nodes []domain.ProtocolNode) (
 		if strings.TrimSpace(encryptedConfig.Sensitive) == "" {
 			continue
 		}
-		values := map[string]string{}
-		if err := json.Unmarshal([]byte(encryptedConfig.Sensitive), &values); err != nil {
-			continue
-		}
-		out[node.ID] = values
+		out[node.ID] = parseSensitiveValues(encryptedConfig.Sensitive)
 	}
 
 	return out, nil
+}
+
+func parseSensitiveValues(value string) map[string]string {
+	values := map[string]string{}
+	if err := json.Unmarshal([]byte(value), &values); err == nil {
+		return values
+	}
+	for _, line := range strings.FieldsFunc(value, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ';' || r == '&'
+	}) {
+		key, raw, ok := strings.Cut(line, "=")
+		if !ok {
+			key, raw, ok = strings.Cut(line, ":")
+		}
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		raw = strings.TrimSpace(raw)
+		if key == "" || raw == "" {
+			continue
+		}
+		values[key] = raw
+	}
+	return values
 }
 
 func replaceSubscriptionNodes(tx *gorm.DB, subscriptionID uint, nodeIDs []uint) error {
@@ -489,9 +568,26 @@ func replaceSubscriptionNodes(tx *gorm.DB, subscriptionID uint, nodeIDs []uint) 
 
 func normalizeSubscriptionRequest(req subscriptionRequest) subscriptionRequest {
 	req.Name = strings.TrimSpace(req.Name)
+	req.ClashTemplate = normalizeClashTemplate(req.ClashTemplate)
+	if req.Format != domain.SubscriptionFormatClashMihomo || req.ClashTemplate != "custom" {
+		req.ClashTemplateID = nil
+	}
 	req.Remark = strings.TrimSpace(req.Remark)
 	req.NodeIDs = uniqueUint(req.NodeIDs)
 	return req
+}
+
+func normalizeClashTemplate(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "rule-cn", "balanced":
+		return "rule-cn"
+	case "global-proxy", "global":
+		return "global-proxy"
+	case "custom":
+		return "custom"
+	default:
+		return "rule-cn"
+	}
 }
 
 func uniqueUint(values []uint) []uint {
@@ -515,7 +611,7 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func renderSubscription(format domain.SubscriptionFormat, nodes []subscriptionNodeView) (string, string, error) {
+func renderSubscription(format domain.SubscriptionFormat, clashTemplate string, customClashTemplate string, nodes []subscriptionNodeView) (string, string, error) {
 	switch format {
 	case domain.SubscriptionFormatSingBox:
 		outbounds := make([]map[string]any, 0, len(nodes))
@@ -525,14 +621,7 @@ func renderSubscription(format domain.SubscriptionFormat, nodes []subscriptionNo
 		data, _ := json.MarshalIndent(map[string]any{"outbounds": outbounds}, "", "  ")
 		return string(data), "application/json; charset=utf-8", nil
 	case domain.SubscriptionFormatClashMihomo:
-		lines := []string{"proxies:"}
-		for _, node := range nodes {
-			lines = append(lines, fmt.Sprintf("  - name: %q", node.Name))
-			lines = append(lines, fmt.Sprintf("    type: %q", node.clashType()))
-			lines = append(lines, fmt.Sprintf("    server: %q", node.Address))
-			lines = append(lines, fmt.Sprintf("    port: %d", node.Port))
-		}
-		return strings.Join(lines, "\n") + "\n", "text/yaml; charset=utf-8", nil
+		return renderClashMihomo(clashTemplate, customClashTemplate, nodes), "text/yaml; charset=utf-8", nil
 	case domain.SubscriptionFormatV2RayN, domain.SubscriptionFormatShadowrocket:
 		lines := make([]string, 0, len(nodes))
 		for _, node := range nodes {
@@ -548,6 +637,258 @@ func renderSubscription(format domain.SubscriptionFormat, nodes []subscriptionNo
 	default:
 		return "", "", errors.New("unsupported subscription format")
 	}
+}
+
+func renderClashMihomo(template string, customTemplate string, nodes []subscriptionNodeView) string {
+	template = normalizeClashTemplate(template)
+	if template == "custom" && strings.TrimSpace(customTemplate) != "" {
+		return renderCustomClashMihomo(customTemplate, nodes)
+	}
+	proxyNames := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		proxyNames = append(proxyNames, node.Name)
+	}
+
+	lines := []string{
+		"mixed-port: 7890",
+		"allow-lan: false",
+		"mode: " + clashModeForTemplate(template),
+		"log-level: info",
+		"ipv6: false",
+		"external-controller: 127.0.0.1:9090",
+		"",
+		"dns:",
+		"  enable: true",
+		"  listen: 0.0.0.0:1053",
+		"  enhanced-mode: fake-ip",
+		"  fake-ip-range: 198.18.0.1/16",
+		"  default-nameserver:",
+		"    - 223.5.5.5",
+		"    - 119.29.29.29",
+		"  nameserver:",
+		"    - https://dns.alidns.com/dns-query",
+		"    - https://doh.pub/dns-query",
+		"  fallback:",
+		"    - https://1.1.1.1/dns-query",
+		"    - https://8.8.8.8/dns-query",
+		"",
+		"proxies:",
+	}
+	if len(nodes) == 0 {
+		lines = append(lines, "  []")
+	} else {
+		for _, node := range nodes {
+			lines = append(lines, node.clashProxyLines()...)
+		}
+	}
+
+	lines = append(lines,
+		"",
+		"proxy-groups:",
+		"  - name: "+yamlQuote("PROXY"),
+		"    type: select",
+	)
+	if len(proxyNames) == 0 {
+		lines = append(lines, "    proxies:", "      - DIRECT")
+	} else {
+		lines = append(lines, "    proxies:")
+		for _, name := range proxyNames {
+			lines = append(lines, "      - "+yamlQuote(name))
+		}
+		lines = append(lines, "      - DIRECT")
+	}
+	lines = append(lines,
+		"  - name: "+yamlQuote("AUTO"),
+		"    type: url-test",
+		"    url: http://www.gstatic.com/generate_204",
+		"    interval: 300",
+		"    tolerance: 50",
+	)
+	if len(proxyNames) == 0 {
+		lines = append(lines, "    proxies:", "      - DIRECT")
+	} else {
+		lines = append(lines, "    proxies:")
+		for _, name := range proxyNames {
+			lines = append(lines, "      - "+yamlQuote(name))
+		}
+	}
+	lines = append(lines, "", "rules:")
+	lines = append(lines, clashRulesForTemplate(template)...)
+
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func renderCustomClashMihomo(template string, nodes []subscriptionNodeView) string {
+	lines := splitYAMLLines(template)
+	lines = replaceTopLevelYAMLBlock(lines, "proxies:", clashProxyBlock(nodes))
+	lines = replaceProxyGroupProxyLists(lines, clashProxyNames(nodes))
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func clashProxyBlock(nodes []subscriptionNodeView) []string {
+	if len(nodes) == 0 {
+		return []string{"  []"}
+	}
+	lines := make([]string, 0, len(nodes)*6)
+	for _, node := range nodes {
+		lines = append(lines, node.clashProxyLines()...)
+	}
+	return lines
+}
+
+func clashProxyNames(nodes []subscriptionNodeView) []string {
+	names := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		names = append(names, node.Name)
+	}
+	return names
+}
+
+func splitYAMLLines(value string) []string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.TrimRight(value, "\n")
+	if value == "" {
+		return []string{}
+	}
+	return strings.Split(value, "\n")
+}
+
+func replaceTopLevelYAMLBlock(lines []string, key string, block []string) []string {
+	start := -1
+	for index, line := range lines {
+		if strings.TrimSpace(line) == key && leadingSpaces(line) == 0 {
+			start = index
+			break
+		}
+	}
+	if start == -1 {
+		out := append([]string{}, lines...)
+		if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
+			out = append(out, "")
+		}
+		out = append(out, strings.TrimSuffix(key, ":")+":")
+		out = append(out, block...)
+		return out
+	}
+	end := len(lines)
+	for index := start + 1; index < len(lines); index++ {
+		line := lines[index]
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if leadingSpaces(line) == 0 && !strings.HasPrefix(strings.TrimSpace(line), "-") {
+			end = index
+			break
+		}
+	}
+	out := make([]string, 0, len(lines)-end+start+1+len(block))
+	out = append(out, lines[:start+1]...)
+	out = append(out, block...)
+	out = append(out, lines[end:]...)
+	return out
+}
+
+func replaceProxyGroupProxyLists(lines []string, proxyNames []string) []string {
+	groupStart := findTopLevelYAMLKey(lines, "proxy-groups:")
+	if groupStart == -1 {
+		return lines
+	}
+	groupEnd := len(lines)
+	for index := groupStart + 1; index < len(lines); index++ {
+		if strings.TrimSpace(lines[index]) != "" && leadingSpaces(lines[index]) == 0 {
+			groupEnd = index
+			break
+		}
+	}
+
+	out := make([]string, 0, len(lines)+len(proxyNames)*2)
+	out = append(out, lines[:groupStart+1]...)
+	for index := groupStart + 1; index < groupEnd; index++ {
+		line := lines[index]
+		out = append(out, line)
+		if strings.TrimSpace(line) != "proxies:" {
+			continue
+		}
+		indent := leadingSpaces(line)
+		for index+1 < groupEnd {
+			next := lines[index+1]
+			if strings.TrimSpace(next) != "" && leadingSpaces(next) <= indent {
+				break
+			}
+			index++
+		}
+		if len(proxyNames) == 0 {
+			out = append(out, strings.Repeat(" ", indent+2)+"- DIRECT")
+			continue
+		}
+		for _, name := range proxyNames {
+			out = append(out, strings.Repeat(" ", indent+2)+"- "+yamlQuote(name))
+		}
+		out = append(out, strings.Repeat(" ", indent+2)+"- DIRECT")
+	}
+	out = append(out, lines[groupEnd:]...)
+	return out
+}
+
+func findTopLevelYAMLKey(lines []string, key string) int {
+	for index, line := range lines {
+		if strings.TrimSpace(line) == key && leadingSpaces(line) == 0 {
+			return index
+		}
+	}
+	return -1
+}
+
+func leadingSpaces(value string) int {
+	return len(value) - len(strings.TrimLeft(value, " "))
+}
+
+func clashModeForTemplate(template string) string {
+	if normalizeClashTemplate(template) == "global-proxy" {
+		return "global"
+	}
+	return "rule"
+}
+
+func clashRulesForTemplate(template string) []string {
+	if normalizeClashTemplate(template) == "global-proxy" {
+		return []string{
+			"  - GEOIP,LAN,DIRECT",
+			"  - MATCH,PROXY",
+		}
+	}
+	return []string{
+		"  - GEOIP,LAN,DIRECT",
+		"  - GEOIP,CN,DIRECT",
+		"  - MATCH,PROXY",
+	}
+}
+
+func (node subscriptionNodeView) clashProxyLines() []string {
+	lines := []string{
+		"  - name: " + yamlQuote(node.Name),
+		"    type: " + yamlQuote(node.clashType()),
+		"    server: " + yamlQuote(node.Address),
+		fmt.Sprintf("    port: %d", node.Port),
+	}
+	switch normalizedProtocol(node.Protocol) {
+	case "anytls":
+		if strings.TrimSpace(node.Password) != "" {
+			lines = append(lines, "    password: "+yamlQuote(strings.TrimSpace(node.Password)))
+		}
+		lines = append(lines, "    skip-cert-verify: true")
+	case "hysteria2", "tuic":
+		if strings.TrimSpace(node.Password) != "" {
+			lines = append(lines, "    password: "+yamlQuote(strings.TrimSpace(node.Password)))
+		}
+		lines = append(lines, "    skip-cert-verify: true")
+	case "vless", "vmess":
+		if strings.TrimSpace(node.UUID) != "" {
+			lines = append(lines, "    uuid: "+yamlQuote(strings.TrimSpace(node.UUID)))
+		}
+		lines = append(lines, "    tls: true", "    skip-cert-verify: true")
+	}
+	return lines
 }
 
 func (node subscriptionNodeView) toSingBoxOutbound() map[string]any {
@@ -656,4 +997,21 @@ func normalizedProtocol(protocol string) string {
 
 func urlQueryEscape(value string) string {
 	return strings.ReplaceAll(url.QueryEscape(value), "+", "%20")
+}
+
+func yamlQuote(value string) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return `""`
+	}
+	return string(data)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

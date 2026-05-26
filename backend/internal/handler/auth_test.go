@@ -115,7 +115,7 @@ func testRouter(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&domain.User{}, &domain.Server{}, &domain.NATPortMapping{}, &domain.ProtocolNode{}, &domain.Subscription{}, &domain.SubscriptionNode{}, &domain.Task{}, &domain.TaskLog{}, &domain.OperationLog{}); err != nil {
+	if err := db.AutoMigrate(&domain.User{}, &domain.Server{}, &domain.NATPortMapping{}, &domain.ProtocolNode{}, &domain.Subscription{}, &domain.ClashTemplate{}, &domain.SubscriptionNode{}, &domain.Task{}, &domain.TaskLog{}, &domain.OperationLog{}); err != nil {
 		t.Fatalf("migrate test tables: %v", err)
 	}
 	currentTestDB = db

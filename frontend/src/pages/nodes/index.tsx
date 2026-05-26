@@ -44,6 +44,7 @@ const emptyInstallForm = {
   name: "",
   protocol: "AnyTLS",
   port: "",
+  publicPort: "",
   uuid: "",
   realityDomain: "",
   cdnDomain: "",
@@ -143,6 +144,8 @@ export function NodesPage() {
     setMessage("");
   }
 
+  const editingSystemNode = editingNode?.installMethod === "system";
+
   function resetForms() {
     setManualForm(emptyManualForm);
     setLinkForm(emptyLinkForm);
@@ -161,10 +164,12 @@ export function NodesPage() {
             </div>
             <div>
               <h1 className="font-semibold text-slate-950 text-xl">
-                {editingNode ? "编辑外部节点" : "添加外部节点"}
+                {editingNode ? "编辑协议节点" : "添加协议节点"}
               </h1>
               <p className="text-slate-500 text-sm">
-                外部节点不会触发服务器安装任务
+                {editingSystemNode
+                  ? "系统安装节点只允许调整订阅展示信息"
+                  : "公网订阅端口会优先写入订阅链接"}
               </p>
             </div>
           </div>
@@ -198,7 +203,11 @@ export function NodesPage() {
 
           <form className="space-y-4" onSubmit={handleSubmit}>
             {editingNode || mode === "manual" ? (
-              <ManualNodeFields form={manualForm} setForm={setManualForm} />
+              <ManualNodeFields
+                form={manualForm}
+                lockedCore={editingSystemNode}
+                setForm={setManualForm}
+              />
             ) : mode === "link" ? (
               <LinkNodeFields form={linkForm} setForm={setLinkForm} />
             ) : (
@@ -276,8 +285,14 @@ export function NodesPage() {
                         {node.protocol}
                       </td>
                       <td className="py-3 pr-3 text-slate-700">
-                        {node.address}:
-                        {node.publicPort || node.port || node.listenPort}
+                        <div>
+                          {node.address}:{node.listenPort || node.port}
+                        </div>
+                        {node.publicPort && (
+                          <div className="mt-1 text-slate-500 text-xs">
+                            订阅端口 {node.publicPort}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 pr-3">
                         <Badge>
@@ -293,7 +308,8 @@ export function NodesPage() {
                       </td>
                       <td className="py-3 pr-3">
                         <div className="flex justify-end gap-2">
-                          {node.installMethod === "external" && (
+                          {(node.installMethod === "external" ||
+                            node.installMethod === "system") && (
                             <Button
                               onClick={() => startEdit(node)}
                               title="编辑"
@@ -410,7 +426,7 @@ function InstallNodeFields({
         </select>
       </Field>
       <div className="grid gap-3 md:grid-cols-2">
-        <Field label="端口">
+        <Field label="安装/监听端口">
           <Input
             max={65535}
             min={1}
@@ -420,14 +436,26 @@ function InstallNodeFields({
             value={form.port}
           />
         </Field>
-        <Field label="UUID">
+        <Field label="公网订阅端口">
           <Input
-            onChange={(event) => setForm({ ...form, uuid: event.target.value })}
-            placeholder="留空由后端自动生成"
-            value={form.uuid}
+            max={65535}
+            min={1}
+            onChange={(event) =>
+              setForm({ ...form, publicPort: event.target.value })
+            }
+            placeholder="如 48888；留空使用监听端口"
+            type="number"
+            value={form.publicPort}
           />
         </Field>
       </div>
+      <Field label="UUID">
+        <Input
+          onChange={(event) => setForm({ ...form, uuid: event.target.value })}
+          placeholder="留空由后端自动生成"
+          value={form.uuid}
+        />
+      </Field>
       <div className="grid gap-3 md:grid-cols-2">
         <Field label="Reality 域名">
           <Input
@@ -461,9 +489,11 @@ function InstallNodeFields({
 
 function ManualNodeFields({
   form,
+  lockedCore = false,
   setForm,
 }: {
   form: typeof emptyManualForm;
+  lockedCore?: boolean;
   setForm: (form: typeof emptyManualForm) => void;
 }) {
   return (
@@ -479,6 +509,7 @@ function ManualNodeFields({
       <Field label="协议">
         <select
           className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+          disabled={lockedCore}
           onChange={(event) =>
             setForm({ ...form, protocol: event.target.value })
           }
@@ -498,6 +529,7 @@ function ManualNodeFields({
             onChange={(event) =>
               setForm({ ...form, address: event.target.value })
             }
+            disabled={lockedCore}
             placeholder="example.com"
             required
             value={form.address}
@@ -511,6 +543,7 @@ function ManualNodeFields({
               const value = Number(event.target.value);
               setForm({ ...form, port: value, listenPort: value });
             }}
+            disabled={lockedCore}
             required
             type="number"
             value={form.port}
@@ -525,12 +558,13 @@ function ManualNodeFields({
             onChange={(event) =>
               setForm({ ...form, listenPort: Number(event.target.value) })
             }
+            disabled={lockedCore}
             required
             type="number"
             value={form.listenPort}
           />
         </Field>
-        <Field label="对外端口">
+        <Field label="公网订阅端口">
           <Input
             max={65535}
             min={1}
@@ -543,16 +577,18 @@ function ManualNodeFields({
           />
         </Field>
       </div>
-      <Field label="敏感参数">
-        <textarea
-          className="min-h-24 w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-          onChange={(event) =>
-            setForm({ ...form, sensitive: event.target.value })
-          }
-          placeholder="UUID、密码、私钥等；保存后不会明文返回"
-          value={form.sensitive}
-        />
-      </Field>
+      {!lockedCore && (
+        <Field label="敏感参数">
+          <textarea
+            className="min-h-24 w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            onChange={(event) =>
+              setForm({ ...form, sensitive: event.target.value })
+            }
+            placeholder="UUID、密码、私钥等；保存后不会明文返回"
+            value={form.sensitive}
+          />
+        </Field>
+      )}
       <Field label="备注">
         <Input
           onChange={(event) => setForm({ ...form, remark: event.target.value })}
@@ -659,6 +695,7 @@ function buildInstallPayload(
     name: form.name,
     protocol: form.protocol,
     port: form.port ? Number(form.port) : undefined,
+    publicPort: form.publicPort ? Number(form.publicPort) : null,
     uuid: form.uuid,
     realityDomain: form.realityDomain,
     cdnDomain: form.cdnDomain,

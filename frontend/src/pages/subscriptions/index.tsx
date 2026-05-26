@@ -3,12 +3,17 @@ import { Copy, Link2, Pencil, RotateCcw, Share2, Trash2 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { getErrorMessage } from "@/api/errors";
 import {
+  createClashTemplate,
   createSubscription,
+  deleteClashTemplate,
   deleteSubscription,
+  listClashTemplates,
   listNodes,
   listSubscriptions,
   resetSubscriptionToken,
+  type ClashTemplatePayload,
   type SubscriptionPayload,
+  updateClashTemplate,
   updateSubscription,
 } from "@/api/resources";
 import { Badge } from "@/components/ui/badge";
@@ -25,11 +30,25 @@ const subscriptionFormats = [
   { label: "通用 Base64", value: "base64" },
 ];
 
+const clashTemplates = [
+  { label: "规则模式：国内直连", value: "rule-cn" },
+  { label: "全局代理：除局域网外走代理", value: "global-proxy" },
+  { label: "自定义模板", value: "custom" },
+];
+
 const emptyForm: SubscriptionPayload = {
   name: "",
   format: "sing-box",
+  clashTemplate: "rule-cn",
+  clashTemplateId: null,
   enabled: true,
   nodeIds: [],
+  remark: "",
+};
+
+const emptyTemplateForm: ClashTemplatePayload = {
+  name: "",
+  content: "mixed-port: 7890\nmode: rule\nproxies: []\nproxy-groups:\n  - name: PROXY\n    type: select\n    proxies:\n      - DIRECT\nrules:\n  - MATCH,PROXY",
   remark: "",
 };
 
@@ -38,6 +57,11 @@ export function SubscriptionsPage() {
   const [form, setForm] = useState<SubscriptionPayload>(emptyForm);
   const [editingSubscription, setEditingSubscription] =
     useState<Subscription | null>(null);
+  const [templateForm, setTemplateForm] =
+    useState<ClashTemplatePayload>(emptyTemplateForm);
+  const [editingTemplateID, setEditingTemplateID] = useState<number | null>(
+    null,
+  );
   const [message, setMessage] = useState("");
 
   const subscriptionsQuery = useQuery({
@@ -48,6 +72,11 @@ export function SubscriptionsPage() {
   const nodesQuery = useQuery({
     queryKey: ["nodes"],
     queryFn: listNodes,
+  });
+
+  const clashTemplatesQuery = useQuery({
+    queryKey: ["clash-templates"],
+    queryFn: listClashTemplates,
   });
 
   const saveMutation = useMutation({
@@ -87,8 +116,35 @@ export function SubscriptionsPage() {
     },
   });
 
+  const saveTemplateMutation = useMutation({
+    mutationFn: (payload: ClashTemplatePayload) =>
+      editingTemplateID
+        ? updateClashTemplate(editingTemplateID, payload)
+        : createClashTemplate(payload),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["clash-templates"] });
+      resetTemplateForm();
+      setMessage("Clash 模板已保存");
+    },
+    onError: (error) => {
+      setMessage(getErrorMessage(error, "Clash 模板保存失败"));
+    },
+  });
+
+  const deleteTemplateMutation = useMutation({
+    mutationFn: deleteClashTemplate,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["clash-templates"] });
+      setMessage("Clash 模板已删除");
+    },
+    onError: (error) => {
+      setMessage(getErrorMessage(error, "Clash 模板删除失败"));
+    },
+  });
+
   const subscriptions = subscriptionsQuery.data ?? [];
   const nodes = nodesQuery.data ?? [];
+  const customClashTemplates = clashTemplatesQuery.data ?? [];
   const availableNodes = nodes.filter((node) =>
     ["imported", "install_success"].includes(node.status),
   );
@@ -102,6 +158,11 @@ export function SubscriptionsPage() {
   function resetForm() {
     setForm(emptyForm);
     setEditingSubscription(null);
+  }
+
+  function resetTemplateForm() {
+    setTemplateForm(emptyTemplateForm);
+    setEditingTemplateID(null);
   }
 
   async function copySubscriptionURL(url: string) {
@@ -121,6 +182,8 @@ export function SubscriptionsPage() {
     setForm({
       name: subscription.name,
       format: subscription.format,
+      clashTemplate: subscription.clashTemplate ?? "rule-cn",
+      clashTemplateId: subscription.clashTemplateId ?? null,
       enabled: subscription.enabled,
       nodeIds: subscription.nodeIds,
       remark: subscription.remark ?? "",
@@ -136,6 +199,27 @@ export function SubscriptionsPage() {
         ? form.nodeIds.filter((id) => id !== nodeID)
         : [...form.nodeIds, nodeID],
     });
+  }
+
+  function handleTemplateSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+    saveTemplateMutation.mutate(templateForm);
+  }
+
+  function startEditTemplate(template: {
+    id: number;
+    name: string;
+    content: string;
+    remark?: string;
+  }) {
+    setEditingTemplateID(template.id);
+    setTemplateForm({
+      name: template.name,
+      content: template.content,
+      remark: template.remark ?? "",
+    });
+    setMessage("");
   }
 
   return (
@@ -172,7 +256,18 @@ export function SubscriptionsPage() {
               <select
                 className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
                 onChange={(event) =>
-                  setForm({ ...form, format: event.target.value })
+                  setForm({
+                    ...form,
+                    format: event.target.value,
+                    clashTemplate:
+                      event.target.value === "clash-mihomo"
+                        ? (form.clashTemplate ?? "rule-cn")
+                        : "rule-cn",
+                    clashTemplateId:
+                      event.target.value === "clash-mihomo"
+                        ? form.clashTemplateId
+                        : null,
+                  })
                 }
                 required
                 value={form.format}
@@ -184,6 +279,60 @@ export function SubscriptionsPage() {
                 ))}
               </select>
             </Field>
+            {form.format === "clash-mihomo" && (
+              <Field label="Clash 模板">
+                <select
+                  className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      clashTemplate: event.target.value,
+                      clashTemplateId:
+                        event.target.value === "custom"
+                          ? (form.clashTemplateId ??
+                            customClashTemplates[0]?.id ??
+                            null)
+                          : null,
+                    })
+                  }
+                  value={form.clashTemplate ?? "rule-cn"}
+                >
+                  {clashTemplates.map((template) => (
+                    <option key={template.value} value={template.value}>
+                      {template.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            {form.format === "clash-mihomo" &&
+              form.clashTemplate === "custom" && (
+                <Field label="自定义模板">
+                  <select
+                    className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        clashTemplateId: Number(event.target.value),
+                      })
+                    }
+                    required
+                    value={form.clashTemplateId ?? ""}
+                  >
+                    <option value="">选择自定义模板</option>
+                    {customClashTemplates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name}
+                      </option>
+                    ))}
+                  </select>
+                  {customClashTemplates.length === 0 && (
+                    <p className="mt-2 text-slate-500 text-xs">
+                      先在下方保存一个自定义 Clash 模板。
+                    </p>
+                  )}
+                </Field>
+              )}
             <Field label="启用状态">
               <label className="flex h-10 items-center gap-2 rounded-md border border-slate-200 px-3 text-sm">
                 <input
@@ -239,7 +388,13 @@ export function SubscriptionsPage() {
             {message && <p className="text-slate-600 text-sm">{message}</p>}
             <div className="flex gap-2">
               <Button
-                disabled={saveMutation.isPending || form.nodeIds.length === 0}
+                disabled={
+                  saveMutation.isPending ||
+                  form.nodeIds.length === 0 ||
+                  (form.format === "clash-mihomo" &&
+                    form.clashTemplate === "custom" &&
+                    !form.clashTemplateId)
+                }
                 type="submit"
               >
                 {saveMutation.isPending
@@ -255,6 +410,128 @@ export function SubscriptionsPage() {
               )}
             </div>
           </form>
+        </CardContent>
+      </Card>
+
+      <Card className="xl:order-last xl:col-span-2">
+        <CardHeader>
+          <div className="font-medium text-slate-950">Clash 自定义模板</div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+            <form className="space-y-3" onSubmit={handleTemplateSubmit}>
+              <Field label="模板名称">
+                <Input
+                  onChange={(event) =>
+                    setTemplateForm({
+                      ...templateForm,
+                      name: event.target.value,
+                    })
+                  }
+                  placeholder="我的 Clash 模板"
+                  required
+                  value={templateForm.name}
+                />
+              </Field>
+              <Field label="模板 YAML">
+                <textarea
+                  className="min-h-64 w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  onChange={(event) =>
+                    setTemplateForm({
+                      ...templateForm,
+                      content: event.target.value,
+                    })
+                  }
+                  required
+                  value={templateForm.content}
+                />
+              </Field>
+              <Field label="备注">
+                <Input
+                  onChange={(event) =>
+                    setTemplateForm({
+                      ...templateForm,
+                      remark: event.target.value,
+                    })
+                  }
+                  placeholder="可选"
+                  value={templateForm.remark}
+                />
+              </Field>
+              <div className="flex gap-2">
+                <Button
+                  disabled={saveTemplateMutation.isPending}
+                  type="submit"
+                >
+                  {saveTemplateMutation.isPending
+                    ? "保存中..."
+                    : editingTemplateID
+                      ? "保存模板"
+                      : "新增模板"}
+                </Button>
+                {editingTemplateID && (
+                  <Button
+                    onClick={resetTemplateForm}
+                    type="button"
+                    variant="secondary"
+                  >
+                    取消
+                  </Button>
+                )}
+              </div>
+            </form>
+
+            {customClashTemplates.length === 0 ? (
+              <div className="rounded-md border border-dashed border-slate-200 p-8 text-center text-slate-500 text-sm">
+                还没有自定义 Clash 模板。
+              </div>
+            ) : (
+              <div className="min-w-0 space-y-3">
+                {customClashTemplates.map((template) => (
+                  <div
+                    className="min-w-0 rounded-md border border-slate-200 p-4"
+                    key={template.id}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-slate-950">
+                          {template.name}
+                        </div>
+                        {template.remark && (
+                          <div className="mt-1 text-slate-500 text-sm">
+                            {template.remark}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => startEditTemplate(template)}
+                          title="编辑模板"
+                          variant="secondary"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          onClick={() => {
+                            if (window.confirm("确定删除这个模板吗？")) {
+                              deleteTemplateMutation.mutate(template.id);
+                            }
+                          }}
+                          title="删除模板"
+                          variant="danger"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                    <pre className="mt-3 max-h-40 max-w-full overflow-auto whitespace-pre rounded-md bg-slate-950 p-3 text-slate-100 text-xs">
+                      {template.content}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </CardContent>
       </Card>
 
@@ -284,6 +561,11 @@ export function SubscriptionsPage() {
                         </div>
                         <Badge>{subscription.enabled ? "启用" : "禁用"}</Badge>
                         <Badge>{subscription.format}</Badge>
+                        {subscription.format === "clash-mihomo" && (
+                          <Badge>
+                            {clashTemplateLabel(subscription.clashTemplate)}
+                          </Badge>
+                        )}
                       </div>
                       <div className="mt-2 text-slate-500 text-sm">
                         {subscription.nodeCount} 个节点
@@ -353,6 +635,13 @@ export function SubscriptionsPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function clashTemplateLabel(value?: string) {
+  return (
+    clashTemplates.find((template) => template.value === value)?.label ??
+    "规则模式：国内直连"
   );
 }
 

@@ -18,6 +18,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&domain.NATPortMapping{},
 		&domain.ProtocolNode{},
 		&domain.Subscription{},
+		&domain.ClashTemplate{},
 		&domain.SubscriptionNode{},
 		&domain.Task{},
 		&domain.TaskLog{},

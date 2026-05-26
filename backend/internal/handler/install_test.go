@@ -60,6 +60,29 @@ func TestInstallNodeGeneratesDefaultPortAndSensitiveParams(t *testing.T) {
 	}
 }
 
+func TestInstallNodeStoresPublicSubscriptionPort(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "install-public-port", "install-public-port@example.com")
+	server := createTestServer(t, app, token, "Public Port Install Server")
+
+	body := `{"serverId":` + strconvUint(server.ID) + `,"name":"AnyTLS Node","protocol":"AnyTLS","port":43888,"publicPort":48888}`
+	res := performRequest(app, http.MethodPost, "/api/v1/nodes/install", body, token)
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("expected install status 202, got %d: %s", res.Code, res.Body.String())
+	}
+
+	var response struct {
+		Node nodeResponse     `json:"node"`
+		Task taskListResponse `json:"task"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode install response: %v", err)
+	}
+	if response.Node.PublicPort == nil || *response.Node.PublicPort != 48888 {
+		t.Fatalf("expected public subscription port 48888, got %+v", response.Node)
+	}
+}
+
 func TestInstallNodeRejectsOtherUserServer(t *testing.T) {
 	app := testRouter(t)
 	ownerToken := registerTestUser(t, app, "install-owner", "install-owner@example.com")

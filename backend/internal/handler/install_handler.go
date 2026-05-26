@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -23,6 +24,7 @@ type installNodeRequest struct {
 	Name          string `json:"name" binding:"required,max=120"`
 	Protocol      string `json:"protocol" binding:"required,max=120"`
 	Port          int    `json:"port" binding:"min=0,max=65535"`
+	PublicPort    *int   `json:"publicPort"`
 	UUID          string `json:"uuid"`
 	RealityDomain string `json:"realityDomain"`
 	CDNDomain     string `json:"cdnDomain"`
@@ -97,6 +99,7 @@ func (h *Handler) InstallNode(c *gin.Context) {
 			Name:                   req.Name,
 			Protocol:               req.Protocol,
 			ListenPort:             req.Port,
+			PublicPort:             req.PublicPort,
 			SubscriptionConfigJSON: string(configJSON),
 			EncryptedProtocolJSON:  encryptedConfig,
 			InstallMethod:          domain.NodeInstallMethodSystem,
@@ -250,6 +253,9 @@ func prepareInstallRequest(req installNodeRequest) (installNodeRequest, error) {
 		if err != nil {
 			return installNodeRequest{}, err
 		}
+	}
+	if req.PublicPort != nil && (*req.PublicPort < 1 || *req.PublicPort > 65535) {
+		return installNodeRequest{}, errors.New("node public port must be between 1 and 65535")
 	}
 	if req.UUID == "" && protocolNeedsUUID(req.Protocol) {
 		req.UUID, err = randomUUID()

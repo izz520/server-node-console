@@ -64,6 +64,10 @@ func New(deps Dependencies) *gin.Engine {
 			protected.PUT("/subscriptions/:id", h.UpdateSubscription)
 			protected.DELETE("/subscriptions/:id", h.DeleteSubscription)
 			protected.POST("/subscriptions/:id/reset-token", h.ResetSubscriptionToken)
+			protected.GET("/clash-templates", h.ListClashTemplates)
+			protected.POST("/clash-templates", h.CreateClashTemplate)
+			protected.PUT("/clash-templates/:id", h.UpdateClashTemplate)
+			protected.DELETE("/clash-templates/:id", h.DeleteClashTemplate)
 
 			protected.GET("/tasks", h.ListTasks)
 			protected.GET("/tasks/:id", h.GetTask)
