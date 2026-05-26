@@ -36,6 +36,10 @@ export interface Server {
   hasPassword: boolean;
   hasPrivateKey: boolean;
   lastCheckedAt?: string | null;
+  expiresAt?: string | null;
+  price?: number;
+  billingCycle?: string;
+  currency?: string;
 }
 
 export interface NATPortMapping {
@@ -53,6 +57,7 @@ export interface NATPortMapping {
 export interface ProtocolNode {
   id: number;
   userId: number;
+  serverId?: number | null;
   name: string;
   protocol: string;
   address: string;

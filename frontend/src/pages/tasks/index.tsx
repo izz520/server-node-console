@@ -45,9 +45,9 @@ export function TasksPage() {
   });
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[380px_1fr] py-4 max-w-7xl mx-auto">
+    <div className="grid gap-6 lg:grid-cols-[350px_1fr] py-4 max-w-7xl mx-auto">
       {/* Task Queue Column */}
-      <Card className="bg-[#0e1017]/70 border-white/[0.04]">
+      <Card className="bg-[#0e1017]/70 border-white/[0.04] min-w-0">
         <CardHeader className="p-5 border-white/[0.04]">
           <div className="flex items-center gap-3">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.04] bg-white/[0.02] text-slate-300">
@@ -73,7 +73,7 @@ export function TasksPage() {
               目前还没有任何部署任务日志。
             </div>
           ) : (
-            <div className="space-y-2 max-h-[640px] overflow-y-auto pr-1 scrollbar-thin">
+            <div className="space-y-2 max-h-[260px] lg:max-h-[640px] overflow-y-auto pr-1 scrollbar-thin">
               {tasks.map((task) => (
                 <button
                   className={cn(
@@ -100,7 +100,7 @@ export function TasksPage() {
                     <TaskStatusBadge task={task} />
                   </div>
                   <div className="mt-2.5 text-slate-500 text-[9px] font-semibold font-mono">
-                    {formatTime(task.createdAt)}
+                    {formatResponsiveTime(task.createdAt)}
                   </div>
                 </button>
               ))}
@@ -110,7 +110,7 @@ export function TasksPage() {
       </Card>
 
       {/* Task Logs details */}
-      <Card className="bg-[#0e1017]/70 border-white/[0.04]">
+      <Card className="bg-[#0e1017]/70 border-white/[0.04] min-w-0">
         <CardHeader className="p-5 border-white/[0.04] flex flex-row items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.04] bg-white/[0.02] text-slate-300">
@@ -126,7 +126,7 @@ export function TasksPage() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="p-6">
+        <CardContent className="p-3 sm:p-6 min-w-0">
           {!selectedTaskID ? (
             <div className="rounded-2xl border border-dashed border-white/[0.04] p-16 text-center text-slate-500 text-xs font-semibold">
               请在左侧列表选择一个正在运行或已归档的任务以读取日志详情。
@@ -148,7 +148,7 @@ export function TasksPage() {
                     当前构建任务尚未输出任何常规日志。
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-white/[0.04] bg-[#05060b] font-mono text-[10px] text-slate-300 p-5 shadow-inner min-h-96 max-h-[600px] overflow-y-auto space-y-2.5 terminal-scroll">
+                  <div className="rounded-xl border border-white/[0.04] bg-[#05060b] font-mono text-[10px] text-slate-300 p-3 sm:p-5 shadow-inner min-h-96 max-h-[600px] overflow-auto w-full max-w-full space-y-2.5 terminal-scroll">
                     {taskDetailQuery.data.logs.map((log) => {
                       const isError = log.level === "ERROR";
                       const isWarn = log.level === "WARNING";
@@ -158,12 +158,17 @@ export function TasksPage() {
                           ? "text-amber-400 font-bold"
                           : "text-emerald-400 font-bold";
                       return (
-                        <div className="flex items-start gap-3" key={log.id}>
-                          <span className="text-slate-600 select-none text-[9px]">
-                            [{formatTime(log.createdAt)}]
+                        <div
+                          className="flex items-start gap-2 sm:gap-3 min-w-0"
+                          key={log.id}
+                        >
+                          <span className="text-slate-600 select-none text-[9px] shrink-0">
+                            [{formatResponsiveTime(log.createdAt)}]
                           </span>
-                          <span className={levelColor}>[{log.level}]</span>
-                          <span className="text-slate-300 whitespace-pre-wrap flex-1 leading-relaxed">
+                          <span className={`${levelColor} shrink-0`}>
+                            [{log.level}]
+                          </span>
+                          <span className="text-slate-300 whitespace-pre flex-1 min-w-0 leading-relaxed">
                             {log.message}
                           </span>
                         </div>
@@ -190,7 +195,7 @@ export function TasksPage() {
 
 function TaskSummary({ task }: { task: Task }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid gap-3 grid-cols-2 sm:grid-cols-2 lg:grid-cols-3">
       <SummaryItem
         label="动作类型"
         value={taskTypeLabels[task.type] || task.type}
@@ -201,8 +206,14 @@ function TaskSummary({ task }: { task: Task }) {
       />
       <SummaryItem label="物理云主机 ID" value={task.serverId ?? "-"} />
       <SummaryItem label="目标节点 ID" value={task.nodeId ?? "-"} />
-      <SummaryItem label="进程派生时间" value={formatTime(task.startedAt)} />
-      <SummaryItem label="进程终止时间" value={formatTime(task.endedAt)} />
+      <SummaryItem
+        label="进程派生时间"
+        value={formatResponsiveTime(task.startedAt)}
+      />
+      <SummaryItem
+        label="进程终止时间"
+        value={formatResponsiveTime(task.endedAt)}
+      />
       {task.error && (
         <div className="sm:col-span-2 lg:col-span-3 rounded-xl border border-red-500/10 bg-red-500/5 p-4 shadow-sm">
           <div className="text-red-400 text-[10px] font-bold uppercase tracking-wider">
@@ -222,10 +233,10 @@ function SummaryItem({
   value,
 }: {
   label: string;
-  value: string | number;
+  value: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-white/[0.03] bg-white/[0.01] p-4 shadow-inner">
+    <div className="rounded-xl border border-white/[0.03] bg-white/[0.01] p-3 sm:p-4 shadow-inner">
       <div className="text-slate-500 text-[9px] font-bold uppercase tracking-widest">
         {label}
       </div>
@@ -268,9 +279,29 @@ function TaskStatusBadge({ task }: { task: Task }) {
   );
 }
 
-function formatTime(value?: string | null) {
+function _formatTime(value?: string | null) {
   if (!value) {
     return "-";
   }
   return new Date(value).toLocaleString();
+}
+
+function formatResponsiveTime(value?: string | null) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  const dateStr = date.toLocaleDateString();
+  const timeStr = date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  return (
+    <>
+      <span className="hidden sm:inline">{dateStr} </span>
+      <span>{timeStr}</span>
+    </>
+  );
 }

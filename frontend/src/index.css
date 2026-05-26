@@ -114,3 +114,12 @@ textarea:focus {
   border-color: rgba(99, 102, 241, 0.4);
   box-shadow: 0 0 20px rgba(99, 102, 241, 0.08);
 }
+
+/* Hide scrollbars but keep functionality */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}

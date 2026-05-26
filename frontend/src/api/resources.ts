@@ -23,6 +23,10 @@ export interface ServerPayload {
   region?: string;
   tags?: string;
   remark?: string;
+  expiresAt?: string | null;
+  price?: number;
+  billingCycle?: string;
+  currency?: string;
 }
 
 export interface NATMappingPayload {

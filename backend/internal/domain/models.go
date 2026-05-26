@@ -99,6 +99,10 @@ type Server struct {
 	Remark              string         `gorm:"type:text" json:"remark"`
 	Status              ServerStatus   `gorm:"size:32;not null;default:connection_failed" json:"status"`
 	LastCheckedAt       *time.Time     `json:"lastCheckedAt"`
+	ExpiresAt           *time.Time     `json:"expiresAt"`
+	Price               float64        `gorm:"type:numeric(10,2)" json:"price"`
+	BillingCycle        string         `gorm:"size:32" json:"billingCycle"`
+	Currency            string         `gorm:"size:16" json:"currency"`
 	CreatedAt           time.Time      `json:"createdAt"`
 	UpdatedAt           time.Time      `json:"updatedAt"`
 	DeletedAt           gorm.DeletedAt `gorm:"index" json:"-"`

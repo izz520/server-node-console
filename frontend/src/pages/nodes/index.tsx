@@ -5,6 +5,7 @@ import {
   LinkIcon,
   Pencil,
   Plus,
+  Server,
   Trash2,
 } from "lucide-react";
 import { type FormEvent, useState } from "react";
@@ -26,6 +27,13 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { SUPPORTED_PROTOCOLS } from "@/constants/protocols";
 import { cn } from "@/lib/utils";
 import type { ProtocolNode } from "@/types/domain";
@@ -130,6 +138,23 @@ export function NodesPage() {
   });
 
   const nodes = nodesQuery.data ?? [];
+  const servers = serversQuery.data ?? [];
+
+  const findServerName = (node: ProtocolNode) => {
+    if (node.serverId) {
+      const server = servers.find((s) => s.id === node.serverId);
+      if (server) return server.name;
+    }
+    // Fallback: match by IP address or hostname
+    const matched = servers.find(
+      (s) =>
+        s.host === node.address ||
+        s.host.includes(node.address) ||
+        node.address.includes(s.host),
+    );
+    if (matched) return matched.name;
+    return null;
+  };
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -272,6 +297,18 @@ export function NodesPage() {
                           <span className="font-mono text-slate-300 text-[11px]">
                             {node.publicPort}
                           </span>
+                        </div>
+                      )}
+
+                      {findServerName(node) && (
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-500 font-semibold text-[10px] uppercase tracking-wider">
+                            部署物理机
+                          </span>
+                          <Badge className="border-white/[0.04] bg-white/[0.02] text-slate-300 text-[10px] px-2 py-0.5 flex items-center gap-1.5 font-semibold">
+                            <Server className="h-3 w-3 text-slate-500" />
+                            <span>{findServerName(node)}</span>
+                          </Badge>
                         </div>
                       )}
                     </div>
@@ -501,21 +538,34 @@ function InstallNodeFields({
   return (
     <>
       <Field label="目标物理服务器">
-        <select
-          className="h-9 w-full rounded-lg border border-white/[0.06] bg-slate-950 px-3 text-xs text-slate-100 outline-none transition-all duration-300 focus:border-white/20 focus:ring-0 cursor-pointer"
-          onChange={(event) =>
-            setForm({ ...form, serverId: event.target.value })
-          }
-          required
+        <Select
           value={form.serverId}
+          onValueChange={(value) => setForm({ ...form, serverId: value })}
         >
-          <option value="">选择目标主机</option>
-          {normalServers.map((server) => (
-            <option key={server.id} value={server.id}>
-              {server.name} · {server.host}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger>
+            <SelectValue
+              placeholder="选择目标主机"
+              displayValue={
+                form.serverId
+                  ? (() => {
+                      const s = normalServers.find(
+                        (srv) => String(srv.id) === form.serverId,
+                      );
+                      return s ? `${s.name} · ${s.host}` : undefined;
+                    })()
+                  : undefined
+              }
+            />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">选择目标主机</SelectItem>
+            {normalServers.map((server) => (
+              <SelectItem key={server.id} value={String(server.id)}>
+                {server.name} · {server.host}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         {normalServers.length === 0 && (
           <p className="mt-2 text-slate-400 text-[10px] leading-normal">
             暂无可安装的服务器，请确保至少有一台服务器在“服务器管理”中显示“正常”状态。
@@ -531,22 +581,23 @@ function InstallNodeFields({
         />
       </Field>
       <Field label="底层核心协议">
-        <select
-          className="h-9 w-full rounded-lg border border-white/[0.06] bg-slate-950 px-3 text-xs text-slate-100 outline-none transition-all duration-300 focus:border-white/20 focus:ring-0 cursor-pointer"
-          onChange={(event) =>
-            setForm({ ...form, protocol: event.target.value })
-          }
-          required
+        <Select
           value={form.protocol}
+          onValueChange={(value) => setForm({ ...form, protocol: value })}
         >
-          {SUPPORTED_PROTOCOLS.filter(
-            (protocol) => !protocol.includes("Argo"),
-          ).map((protocol) => (
-            <option key={protocol} value={protocol}>
-              {protocol}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger>
+            <SelectValue displayValue={form.protocol} />
+          </SelectTrigger>
+          <SelectContent>
+            {SUPPORTED_PROTOCOLS.filter(
+              (protocol) => !protocol.includes("Argo"),
+            ).map((protocol) => (
+              <SelectItem key={protocol} value={protocol}>
+                {protocol}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </Field>
       <div className="grid gap-3 md:grid-cols-2">
         <Field label="安装/监听端口">
@@ -630,21 +681,21 @@ function ManualNodeFields({
         />
       </Field>
       <Field label="传输协议">
-        <select
-          className="h-9 w-full rounded-lg border border-white/[0.06] bg-slate-950 px-3 text-xs text-slate-100 outline-none transition-all duration-300 focus:border-white/20 focus:ring-0 cursor-pointer"
-          disabled={lockedCore}
-          onChange={(event) =>
-            setForm({ ...form, protocol: event.target.value })
-          }
-          required
+        <Select
           value={form.protocol}
+          onValueChange={(value) => setForm({ ...form, protocol: value })}
         >
-          {SUPPORTED_PROTOCOLS.map((protocol) => (
-            <option key={protocol} value={protocol}>
-              {protocol}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger disabled={lockedCore}>
+            <SelectValue displayValue={form.protocol} />
+          </SelectTrigger>
+          <SelectContent>
+            {SUPPORTED_PROTOCOLS.map((protocol) => (
+              <SelectItem key={protocol} value={protocol}>
+                {protocol}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </Field>
       <div className="grid gap-3 md:grid-cols-[1fr_110px]">
         <Field label="连接地址/IP">
@@ -652,7 +703,6 @@ function ManualNodeFields({
             onChange={(event) =>
               setForm({ ...form, address: event.target.value })
             }
-            disabled={lockedCore}
             placeholder="example.com"
             required
             value={form.address}

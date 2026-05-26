@@ -1,14 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Globe,
-  Network,
-  Pencil,
-  PlugZap,
-  Plus,
-  Server,
-  Tag,
-  Trash2,
-} from "lucide-react";
+import { Loader2, Pencil, PlugZap, Plus, Server, Trash2 } from "lucide-react";
 import { type FormEvent, useMemo, useState } from "react";
 import { getErrorMessage } from "@/api/errors";
 import {
@@ -29,6 +20,14 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useToastStore } from "@/stores/toast";
 import type {
   NATPortMapping,
   Server as ServerModel,
@@ -46,6 +45,10 @@ const emptyForm: ServerPayload = {
   region: "",
   tags: "",
   remark: "",
+  expiresAt: "",
+  price: 0,
+  billingCycle: "monthly",
+  currency: "CNY",
 };
 
 const statusLabels = {
@@ -62,8 +65,20 @@ const emptyNATForm: NATMappingPayload = {
   remark: "",
 };
 
+function getDaysLeft(expiresAtStr?: string | null) {
+  if (!expiresAtStr) return null;
+  const expiresAt = new Date(expiresAtStr);
+  const today = new Date();
+  expiresAt.setHours(0, 0, 0, 0);
+  today.setHours(0, 0, 0, 0);
+  const diffTime = expiresAt.getTime() - today.getTime();
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  return diffDays;
+}
+
 export function ServersPage() {
   const queryClient = useQueryClient();
+  const addToast = useToastStore((state) => state.addToast);
   const [form, setForm] = useState<ServerPayload>(emptyForm);
   const [natForm, setNATForm] = useState<NATMappingPayload>(emptyNATForm);
   const [editingServer, setEditingServer] = useState<ServerModel | null>(null);
@@ -122,10 +137,10 @@ export function ServersPage() {
     mutationFn: testServerSSH,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["servers"] });
-      alert("SSH 连通性测试成功");
+      addToast("SSH 连通性测试成功：服务器连接状态良好！", "success");
     },
     onError: (error) => {
-      alert(getErrorMessage(error, "SSH 连通性测试失败"));
+      addToast(getErrorMessage(error, "SSH 连通性测试失败"), "error");
       queryClient.invalidateQueries({ queryKey: ["servers"] });
     },
   });
@@ -201,6 +216,8 @@ export function ServersPage() {
       sshPort: Number(form.sshPort),
       password: form.authMethod === "password" ? form.password : "",
       privateKey: form.authMethod === "private_key" ? form.privateKey : "",
+      expiresAt: form.expiresAt ? new Date(form.expiresAt).toISOString() : null,
+      price: Number(form.price),
     });
   }
 
@@ -217,6 +234,12 @@ export function ServersPage() {
       region: server.region ?? "",
       tags: server.tags ?? "",
       remark: server.remark ?? "",
+      expiresAt: server.expiresAt
+        ? new Date(server.expiresAt).toISOString().split("T")[0]
+        : "",
+      price: server.price ?? 0,
+      billingCycle: server.billingCycle ?? "monthly",
+      currency: server.currency ?? "CNY",
     });
     setMessage("");
     setIsServerDialogOpen(true);
@@ -293,16 +316,44 @@ export function ServersPage() {
                       <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.04] bg-white/[0.02] text-slate-300 shadow-inner shrink-0">
                         <Server className="h-4 w-4" />
                       </div>
-                      <div>
+                      <div className="flex flex-col items-start gap-1">
                         <div className="font-bold text-slate-200 text-sm tracking-wide">
                           {server.name}
                         </div>
-                        <div className="text-[10px] text-slate-500 font-semibold font-mono mt-0.5">
-                          ID: #{server.id}
-                        </div>
+                        {(() => {
+                          const daysLeft = getDaysLeft(server.expiresAt);
+                          if (daysLeft === null) {
+                            return (
+                              <Badge className="border-white/[0.04] bg-white/[0.02] text-slate-500 font-semibold px-2 py-0.5 mt-0.5">
+                                永久有效
+                              </Badge>
+                            );
+                          }
+                          if (daysLeft < 0) {
+                            return (
+                              <Badge className="border-rose-500/10 bg-rose-500/5 text-rose-400 font-bold px-2 py-0.5 mt-0.5">
+                                已过期 {Math.abs(daysLeft)} 天
+                              </Badge>
+                            );
+                          }
+                          if (daysLeft <= 30) {
+                            return (
+                              <Badge className="border-amber-500/10 bg-amber-500/5 text-amber-400 font-bold animate-pulse px-2 py-0.5 mt-0.5">
+                                仅剩 {daysLeft} 天到期
+                              </Badge>
+                            );
+                          }
+                          return (
+                            <Badge className="border-emerald-500/10 bg-emerald-500/5 text-emerald-400 font-semibold px-2 py-0.5 mt-0.5">
+                              剩 {daysLeft} 天到期
+                            </Badge>
+                          );
+                        })()}
                       </div>
                     </div>
-                    <StatusBadge status={server.status} />
+                    <div className="shrink-0">
+                      <StatusBadge status={server.status} />
+                    </div>
                   </div>
 
                   <div className="mt-6 space-y-2 border-t border-white/[0.03] pt-4">
@@ -326,63 +377,57 @@ export function ServersPage() {
                       </span>
                     </div>
 
-                    {server.region && (
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-500 font-semibold text-[10px] uppercase tracking-wider">
-                          部署属地
-                        </span>
-                        <div className="flex items-center gap-1 text-slate-300 font-medium">
-                          <Globe className="h-3 w-3 text-slate-500" />
-                          <span>{server.region}</span>
-                        </div>
-                      </div>
-                    )}
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-500 font-semibold text-[10px] uppercase tracking-wider">
+                        配置费用
+                      </span>
+                      <span className="text-slate-300 font-medium font-mono">
+                        {server.price && server.price > 0 ? (
+                          <>
+                            {server.currency === "CNY"
+                              ? "¥"
+                              : server.currency === "USD"
+                                ? "$"
+                                : server.currency === "HKD"
+                                  ? "HK$"
+                                  : "C$"}
+                            {server.price.toFixed(2)} /{" "}
+                            {server.billingCycle === "monthly"
+                              ? "月付"
+                              : server.billingCycle === "quarterly"
+                                ? "季付"
+                                : "年付"}
+                          </>
+                        ) : (
+                          "免费"
+                        )}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
                 {/* Card Bottom Actions */}
                 <div className="p-6 pt-4 border-t border-white/[0.03] bg-white/[0.01]">
-                  {/* Tags remark block */}
-                  {(server.tags || server.remark) && (
-                    <div className="flex flex-wrap items-center gap-1.5 mb-4">
-                      {server.tags?.split(",").map((tag) => (
-                        <Badge
-                          className="border-slate-800 bg-slate-900/60 text-slate-400 font-mono text-[9px] px-1.5"
-                          key={tag}
-                        >
-                          <Tag className="mr-1 h-2.5 w-2.5 text-slate-500" />
-                          {tag.trim()}
-                        </Badge>
-                      ))}
-                      {server.remark && (
-                        <div className="text-[10px] text-slate-500 font-medium truncate flex-1 text-right">
-                          {server.remark}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
                   {/* Buttons rack */}
                   <div className="flex gap-2">
                     <Button
-                      onClick={() => {
-                        setSelectedServerID(server.id);
-                        resetNATForm();
-                        setIsNATDialogOpen(true);
-                      }}
-                      variant="secondary"
-                      className="flex-1 h-8 rounded-lg flex items-center justify-center gap-1.5 text-[10px]"
-                    >
-                      <Network className="h-3.5 w-3.5 opacity-70" />
-                      <span>NAT 端口</span>
-                    </Button>
-                    <Button
+                      disabled={testMutation.isPending}
                       onClick={() => testMutation.mutate(server.id)}
                       variant="secondary"
-                      className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
-                      title="SSH 连通性测试"
+                      className="flex-1 h-8 rounded-lg flex items-center justify-center gap-1.5 text-[10px] disabled:opacity-40"
                     >
-                      <PlugZap className="h-3.5 w-3.5 text-slate-400 hover:text-white transition-colors" />
+                      {testMutation.isPending &&
+                      testMutation.variables === server.id ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 text-indigo-400 animate-spin" />
+                          <span>正在测试...</span>
+                        </>
+                      ) : (
+                        <>
+                          <PlugZap className="h-3.5 w-3.5 text-slate-400" />
+                          <span>测试连接</span>
+                        </>
+                      )}
                     </Button>
                     <Button
                       onClick={() => startEdit(server)}
@@ -467,19 +512,27 @@ export function ServersPage() {
             />
           </Field>
           <Field label="认证方式">
-            <select
-              className="h-9 w-full rounded-lg border border-white/[0.06] bg-slate-950 px-3 text-xs text-slate-100 outline-none transition-all duration-300 focus:border-white/20 focus:ring-0 cursor-pointer"
-              onChange={(event) =>
+            <Select
+              value={form.authMethod}
+              onValueChange={(value) =>
                 setForm({
                   ...form,
-                  authMethod: event.target.value as SSHAuthMethod,
+                  authMethod: value as SSHAuthMethod,
                 })
               }
-              value={form.authMethod}
             >
-              <option value="password">密码</option>
-              <option value="private_key">私钥</option>
-            </select>
+              <SelectTrigger>
+                <SelectValue
+                  displayValue={
+                    form.authMethod === "password" ? "密码" : "私钥"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="password">密码</SelectItem>
+                <SelectItem value="private_key">私钥</SelectItem>
+              </SelectContent>
+            </Select>
           </Field>
           {form.authMethod === "password" ? (
             <Field label="SSH 密码">
@@ -512,34 +565,86 @@ export function ServersPage() {
             </p>
           )}
           <div className="grid gap-3 md:grid-cols-2">
-            <Field label="地区">
+            <Field label="过期时间">
               <Input
+                type="date"
                 onChange={(event) =>
-                  setForm({ ...form, region: event.target.value })
+                  setForm({ ...form, expiresAt: event.target.value })
                 }
-                placeholder="Hong Kong"
-                value={form.region}
+                value={form.expiresAt || ""}
               />
             </Field>
-            <Field label="标签">
+            <Field label="价格">
               <Input
+                type="number"
+                step="0.01"
+                placeholder="99.00"
                 onChange={(event) =>
-                  setForm({ ...form, tags: event.target.value })
+                  setForm({
+                    ...form,
+                    price:
+                      event.target.value === ""
+                        ? 0
+                        : Number(event.target.value),
+                  })
                 }
-                placeholder="nat, hk"
-                value={form.tags}
+                value={form.price || ""}
               />
             </Field>
           </div>
-          <Field label="备注">
-            <Input
-              onChange={(event) =>
-                setForm({ ...form, remark: event.target.value })
-              }
-              placeholder="可选备注说明"
-              value={form.remark}
-            />
-          </Field>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="计费周期">
+              <Select
+                value={form.billingCycle || "monthly"}
+                onValueChange={(value) =>
+                  setForm({ ...form, billingCycle: value })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue
+                    displayValue={
+                      form.billingCycle === "monthly"
+                        ? "月付"
+                        : form.billingCycle === "quarterly"
+                          ? "季付"
+                          : "年付"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="monthly">月付</SelectItem>
+                  <SelectItem value="quarterly">季付</SelectItem>
+                  <SelectItem value="yearly">年付</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="支付币种">
+              <Select
+                value={form.currency || "CNY"}
+                onValueChange={(value) => setForm({ ...form, currency: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue
+                    displayValue={
+                      form.currency === "CNY"
+                        ? "人民币 (¥)"
+                        : form.currency === "USD"
+                          ? "美元 ($)"
+                          : form.currency === "HKD"
+                            ? "港币 (HK$)"
+                            : "加元 (C$)"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="CNY">人民币 (¥)</SelectItem>
+                  <SelectItem value="USD">美元 ($)</SelectItem>
+                  <SelectItem value="HKD">港币 (HK$)</SelectItem>
+                  <SelectItem value="CAD">加元 (C$)</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
           {message && (
             <p className="text-rose-400 text-xs font-semibold bg-red-500/5 border border-red-500/10 px-3.5 py-2.5 rounded-lg">
               {message}
@@ -597,19 +702,23 @@ export function ServersPage() {
                 />
               </Field>
               <Field label="协议类型">
-                <select
-                  className="h-9 w-full rounded-lg border border-white/[0.06] bg-slate-950 px-3 text-xs text-slate-100 outline-none transition-all duration-300 focus:border-white/20 focus:ring-0 cursor-pointer"
-                  onChange={(event) =>
+                <Select
+                  value={natForm.transport || ""}
+                  onValueChange={(value) =>
                     setNATForm({
                       ...natForm,
-                      transport: event.target.value,
+                      transport: value,
                     })
                   }
-                  value={natForm.transport}
                 >
-                  <option value="TCP">TCP</option>
-                  <option value="UDP">UDP</option>
-                </select>
+                  <SelectTrigger>
+                    <SelectValue displayValue={natForm.transport} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="TCP">TCP</SelectItem>
+                    <SelectItem value="UDP">UDP</SelectItem>
+                  </SelectContent>
+                </Select>
               </Field>
               <div className="grid gap-3 grid-cols-2">
                 <Field label="实际监听端口">

@@ -29,6 +29,13 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type { Subscription } from "@/types/domain";
 
@@ -257,7 +264,7 @@ export function SubscriptionsPage() {
             resetForm();
             setIsSubDialogOpen(true);
           }}
-          className="bg-white text-slate-950 hover:bg-slate-100 px-4 h-9 font-semibold text-xs tracking-wide rounded-lg flex items-center gap-1.5 self-start sm:self-center"
+          className="bg-white text-slate-950 hover:bg-slate-100 px-4 h-9 font-semibold text-xs tracking-wide rounded-lg flex items-center gap-1.5 w-full sm:w-auto justify-center"
         >
           <Plus className="h-4 w-4" />
           创建订阅规则
@@ -283,12 +290,12 @@ export function SubscriptionsPage() {
 
               return (
                 <Card
-                  className="bg-[#0e1017]/70 border-white/[0.04] p-6 shadow-lg shadow-black/20 hover:border-white/[0.08] hover:-translate-y-0.5 flex flex-col justify-between"
+                  className="bg-[#0e1017]/70 border-white/[0.04] p-4 sm:p-6 shadow-lg shadow-black/20 hover:border-white/[0.08] hover:-translate-y-0.5 flex flex-col justify-between min-w-0"
                   key={subscription.id}
                 >
                   <div>
                     <div className="flex flex-wrap items-start justify-between gap-2.5">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <div className="font-bold text-slate-200 text-sm tracking-wide">
                           {subscription.name}
                         </div>
@@ -304,7 +311,7 @@ export function SubscriptionsPage() {
                           {subscription.enabled ? "正常分发" : "已禁用"}
                         </Badge>
                       </div>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <Badge className="border-slate-800 bg-slate-900/60 text-slate-400 font-mono text-[9px] px-1.5 py-0">
                           {subscription.format}
                         </Badge>
@@ -355,7 +362,7 @@ export function SubscriptionsPage() {
                       </div>
                     )}
 
-                    <div className="mt-4 flex justify-end gap-2">
+                    <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
                       <Button
                         onClick={() => {
                           if (
@@ -417,7 +424,7 @@ export function SubscriptionsPage() {
             resetTemplateForm();
             setIsTemplateDialogOpen(true);
           }}
-          className="bg-white text-slate-950 hover:bg-slate-100 px-4 h-9 font-semibold text-xs tracking-wide rounded-lg flex items-center gap-1.5 self-start sm:self-center"
+          className="bg-white text-slate-950 hover:bg-slate-100 px-4 h-9 font-semibold text-xs tracking-wide rounded-lg flex items-center gap-1.5 w-full sm:w-auto justify-center"
         >
           <Plus className="h-4 w-4" />
           新增 YAML 模板
@@ -438,11 +445,11 @@ export function SubscriptionsPage() {
           <div className="grid gap-6 md:grid-cols-2">
             {customClashTemplates.map((template) => (
               <Card
-                className="bg-[#0e1017]/70 border-white/[0.04] p-6 shadow-lg shadow-black/20 hover:border-white/[0.08] hover:-translate-y-0.5 flex flex-col justify-between"
+                className="bg-[#0e1017]/70 border-white/[0.04] p-4 sm:p-6 shadow-lg shadow-black/20 hover:border-white/[0.08] hover:-translate-y-0.5 flex flex-col justify-between min-w-0"
                 key={template.id}
               >
                 <div>
-                  <div className="flex items-center justify-between gap-3 border-b border-white/[0.03] pb-4 mb-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-white/[0.03] pb-4 mb-4">
                     <div>
                       <div className="font-bold text-slate-200 text-sm tracking-wide flex items-center gap-2">
                         <Terminal className="h-4 w-4 text-[#6366f1]" />
@@ -454,7 +461,7 @@ export function SubscriptionsPage() {
                         </div>
                       )}
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 shrink-0">
                       <Button
                         onClick={() => startEditTemplate(template)}
                         variant="secondary"
@@ -478,7 +485,7 @@ export function SubscriptionsPage() {
                     </div>
                   </div>
                 </div>
-                <pre className="max-h-48 overflow-auto whitespace-pre rounded-lg border border-white/[0.04] bg-[#090b11] p-4 text-emerald-400 font-mono text-[10px] leading-relaxed scrollbar-thin shadow-inner select-all">
+                <pre className="max-h-48 w-full overflow-x-auto whitespace-pre rounded-lg border border-white/[0.04] bg-[#090b11] p-4 text-emerald-400 font-mono text-[10px] leading-relaxed scrollbar-thin shadow-inner select-all">
                   {template.content}
                 </pre>
               </Card>
@@ -509,81 +516,111 @@ export function SubscriptionsPage() {
             />
           </Field>
           <Field label="输出格式">
-            <select
-              className="h-9 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 text-xs text-slate-100 outline-none transition-all duration-300 focus:border-white/20 focus:ring-0 cursor-pointer"
-              onChange={(event) =>
+            <Select
+              value={form.format}
+              onValueChange={(value) =>
                 setForm({
                   ...form,
-                  format: event.target.value,
+                  format: value,
                   clashTemplate:
-                    event.target.value === "clash-mihomo"
+                    value === "clash-mihomo"
                       ? (form.clashTemplate ?? "rule-cn")
                       : "rule-cn",
                   clashTemplateId:
-                    event.target.value === "clash-mihomo"
-                      ? form.clashTemplateId
-                      : null,
+                    value === "clash-mihomo" ? form.clashTemplateId : null,
                 })
               }
-              required
-              value={form.format}
             >
-              {subscriptionFormats.map((format) => (
-                <option key={format.value} value={format.value}>
-                  {format.label}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger>
+                <SelectValue
+                  displayValue={
+                    subscriptionFormats.find((f) => f.value === form.format)
+                      ?.label
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {subscriptionFormats.map((format) => (
+                  <SelectItem key={format.value} value={format.value}>
+                    {format.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Field>
 
           {form.format === "clash-mihomo" && (
             <Field label="Clash 基础策略规则">
-              <select
-                className="h-9 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 text-xs text-slate-100 outline-none transition-all duration-300 focus:border-white/20 focus:ring-0 cursor-pointer"
-                onChange={(event) =>
+              <Select
+                value={form.clashTemplate ?? "rule-cn"}
+                onValueChange={(value) =>
                   setForm({
                     ...form,
-                    clashTemplate: event.target.value,
+                    clashTemplate: value,
                     clashTemplateId:
-                      event.target.value === "custom"
+                      value === "custom"
                         ? (form.clashTemplateId ??
                           customClashTemplates[0]?.id ??
                           null)
                         : null,
                   })
                 }
-                value={form.clashTemplate ?? "rule-cn"}
               >
-                {clashTemplates.map((template) => (
-                  <option key={template.value} value={template.value}>
-                    {template.label}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger>
+                  <SelectValue
+                    displayValue={
+                      clashTemplates.find(
+                        (t) => t.value === (form.clashTemplate ?? "rule-cn"),
+                      )?.label
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {clashTemplates.map((template) => (
+                    <SelectItem key={template.value} value={template.value}>
+                      {template.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </Field>
           )}
 
           {form.format === "clash-mihomo" &&
             form.clashTemplate === "custom" && (
               <Field label="关联的自定义模板">
-                <select
-                  className="h-9 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 text-xs text-slate-100 outline-none transition-all duration-300 focus:border-white/20 focus:ring-0 cursor-pointer"
-                  onChange={(event) =>
+                <Select
+                  value={
+                    form.clashTemplateId ? String(form.clashTemplateId) : ""
+                  }
+                  onValueChange={(value) =>
                     setForm({
                       ...form,
-                      clashTemplateId: Number(event.target.value),
+                      clashTemplateId: value ? Number(value) : null,
                     })
                   }
-                  required
-                  value={form.clashTemplateId ?? ""}
                 >
-                  <option value="">选择已有自定义模板</option>
-                  {customClashTemplates.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger>
+                    <SelectValue
+                      placeholder="选择已有自定义模板"
+                      displayValue={
+                        form.clashTemplateId
+                          ? customClashTemplates.find(
+                              (t) => t.id === form.clashTemplateId,
+                            )?.name
+                          : undefined
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">选择已有自定义模板</SelectItem>
+                    {customClashTemplates.map((template) => (
+                      <SelectItem key={template.id} value={String(template.id)}>
+                        {template.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 {customClashTemplates.length === 0 && (
                   <p className="mt-2 text-slate-400 text-[10px]">
                     请先在控制台主界面中创建至少一个自定义 Clash 配置模板。

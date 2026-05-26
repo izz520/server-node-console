@@ -10,6 +10,7 @@ import {
   Zap,
 } from "lucide-react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { Toaster } from "@/components/ui/toaster";
 import { APP_NAME } from "@/constants/config";
 import { useAuthStore } from "@/stores/auth";
 
@@ -114,7 +115,7 @@ export function AppLayout() {
 
       {/* Mobile Sticky Bar Navigation */}
       <nav className="fixed inset-x-4 bottom-4 z-40 border border-white/[0.04] bg-[#0d0f18]/90 p-2 shadow-2xl backdrop-blur-xl rounded-2xl lg:hidden">
-        <div className="flex gap-1 overflow-x-auto justify-between">
+        <div className="flex gap-1 overflow-x-auto justify-between no-scrollbar">
           {visibleNavItems.map((item) => (
             <NavLink
               className={({ isActive }) =>
@@ -145,6 +146,7 @@ export function AppLayout() {
           </button>
         </div>
       </nav>
+      <Toaster />
     </div>
   );
 }

@@ -18,16 +18,20 @@ import (
 )
 
 type serverRequest struct {
-	Name        string            `json:"name" binding:"required,max=120"`
-	Host        string            `json:"host" binding:"required,max=255"`
-	SSHPort     int               `json:"sshPort" binding:"required,min=1,max=65535"`
-	SSHUsername string            `json:"sshUsername" binding:"required,max=120"`
-	AuthMethod  domain.AuthMethod `json:"authMethod" binding:"required"`
-	Password    string            `json:"password"`
-	PrivateKey  string            `json:"privateKey"`
-	Region      string            `json:"region"`
-	Tags        string            `json:"tags"`
-	Remark      string            `json:"remark"`
+	Name         string            `json:"name" binding:"required,max=120"`
+	Host         string            `json:"host" binding:"required,max=255"`
+	SSHPort      int               `json:"sshPort" binding:"required,min=1,max=65535"`
+	SSHUsername  string            `json:"sshUsername" binding:"required,max=120"`
+	AuthMethod   domain.AuthMethod `json:"authMethod" binding:"required"`
+	Password     string            `json:"password"`
+	PrivateKey   string            `json:"privateKey"`
+	Region       string            `json:"region"`
+	Tags         string            `json:"tags"`
+	Remark       string            `json:"remark"`
+	ExpiresAt    *time.Time        `json:"expiresAt"`
+	Price        float64           `json:"price"`
+	BillingCycle string            `json:"billingCycle"`
+	Currency     string            `json:"currency"`
 }
 
 type serverResponse struct {
@@ -47,6 +51,10 @@ type serverResponse struct {
 	LastCheckedAt *time.Time          `json:"lastCheckedAt"`
 	CreatedAt     time.Time           `json:"createdAt"`
 	UpdatedAt     time.Time           `json:"updatedAt"`
+	ExpiresAt     *time.Time          `json:"expiresAt"`
+	Price         float64             `json:"price"`
+	BillingCycle  string              `json:"billingCycle"`
+	Currency      string              `json:"currency"`
 }
 
 func (h *Handler) ListServers(c *gin.Context) {
@@ -126,6 +134,10 @@ func (h *Handler) CreateServer(c *gin.Context) {
 		Remark:              req.Remark,
 		Status:              domain.ServerStatusNormal,
 		LastCheckedAt:       &now,
+		ExpiresAt:           req.ExpiresAt,
+		Price:               req.Price,
+		BillingCycle:        req.BillingCycle,
+		Currency:            req.Currency,
 	}
 	if err := h.db.Create(&server).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "create server failed"})
@@ -191,6 +203,10 @@ func (h *Handler) UpdateServer(c *gin.Context) {
 	server.Region = req.Region
 	server.Tags = req.Tags
 	server.Remark = req.Remark
+	server.ExpiresAt = req.ExpiresAt
+	server.Price = req.Price
+	server.BillingCycle = req.BillingCycle
+	server.Currency = req.Currency
 
 	if err := h.db.Save(&server).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "update server failed"})
@@ -389,6 +405,8 @@ func normalizeServerRequest(req serverRequest) serverRequest {
 	req.Region = strings.TrimSpace(req.Region)
 	req.Tags = strings.TrimSpace(req.Tags)
 	req.Remark = strings.TrimSpace(req.Remark)
+	req.BillingCycle = strings.TrimSpace(req.BillingCycle)
+	req.Currency = strings.TrimSpace(req.Currency)
 	return req
 }
 
@@ -458,5 +476,9 @@ func toServerResponse(server domain.Server) serverResponse {
 		LastCheckedAt: server.LastCheckedAt,
 		CreatedAt:     server.CreatedAt,
 		UpdatedAt:     server.UpdatedAt,
+		ExpiresAt:     server.ExpiresAt,
+		Price:         server.Price,
+		BillingCycle:  server.BillingCycle,
+		Currency:      server.Currency,
 	}
 }
