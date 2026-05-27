@@ -81,6 +81,9 @@ type ConfirmAction = {
 
 export function SubscriptionsPage() {
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<"subscriptions" | "templates">(
+    "subscriptions",
+  );
   const [form, setForm] = useState<SubscriptionPayload>(emptyForm);
   const [editingSubscription, setEditingSubscription] =
     useState<Subscription | null>(null);
@@ -284,239 +287,260 @@ export function SubscriptionsPage() {
         </Button>
       </section>
 
-      {/* Subscriptions Cards Grid */}
-      <section>
-        {subscriptionsQuery.isLoading ? (
-          <div className="text-slate-400 text-xs font-semibold animate-pulse py-6">
-            正在读取客户端订阅流数据...
-          </div>
-        ) : subscriptions.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-white/[0.04] p-16 text-center text-slate-500 text-xs font-semibold">
-            暂无订阅分发规则。请点击右上角按钮创建一条规则。
-          </div>
-        ) : (
-          <div className="grid gap-5 md:grid-cols-2">
-            {subscriptions.map((subscription) => {
-              const enabledClass = subscription.enabled
-                ? "border-emerald-500/10 bg-emerald-500/5 text-emerald-400 font-medium"
-                : "border-rose-500/10 bg-rose-500/5 text-rose-400 font-medium";
-
-              return (
-                <Card
-                  className="bg-[#0e1017]/70 border-white/[0.04] p-4 sm:p-6 shadow-lg shadow-black/20 hover:border-white/[0.08] hover:-translate-y-0.5 flex flex-col justify-between min-w-0"
-                  key={subscription.id}
-                >
-                  <div>
-                    <div className="flex flex-wrap items-start justify-between gap-2.5">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="font-bold text-slate-200 text-sm tracking-wide">
-                          {subscription.name}
-                        </div>
-                        <Badge className={enabledClass}>
-                          <span
-                            className={cn(
-                              "mr-1 h-1 w-1 rounded-full shrink-0",
-                              subscription.enabled
-                                ? "bg-emerald-500 animate-pulse"
-                                : "bg-rose-500",
-                            )}
-                          />
-                          {subscription.enabled ? "正常分发" : "已禁用"}
-                        </Badge>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <Badge className="border-slate-800 bg-slate-900/60 text-slate-400 font-mono text-[9px] px-1.5 py-0">
-                          {subscription.format}
-                        </Badge>
-                        {subscription.format === "clash-mihomo" && (
-                          <Badge className="border-violet-500/10 bg-violet-500/5 text-violet-400 text-[9px] px-1.5 py-0">
-                            {clashTemplateLabel(subscription.clashTemplate)}
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-
-                    {subscription.remark && (
-                      <p className="mt-3 text-slate-400 text-xs font-semibold">
-                        备注: {subscription.remark}
-                      </p>
-                    )}
-
-                    <div className="mt-4 text-slate-500 text-xs font-semibold">
-                      封装集成代理节点数:{" "}
-                      <span className="text-slate-300 font-bold font-mono">
-                        {subscription.nodeCount}
-                      </span>{" "}
-                      个
-                    </div>
-                  </div>
-
-                  <div className="mt-6 pt-5 border-t border-white/[0.03]">
-                    {subscription.subscriptionUrl && (
-                      <div className="flex items-center gap-2">
-                        <div className="flex min-w-0 flex-1 items-center gap-2 text-slate-300 text-xs font-medium bg-[#090b11] border border-white/[0.04] rounded-lg px-3 py-2 shadow-inner">
-                          <Link2 className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-                          <code className="break-all font-mono text-[10px] select-all truncate text-slate-400">
-                            {subscription.subscriptionUrl}
-                          </code>
-                        </div>
-                        <Button
-                          onClick={() =>
-                            copySubscriptionURL(
-                              subscription.subscriptionUrl ?? "",
-                            )
-                          }
-                          variant="secondary"
-                          className="h-8 w-8 p-0 rounded-lg shrink-0 flex items-center justify-center"
-                          title="复制订阅链接"
-                        >
-                          <Copy className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    )}
-
-                    <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
-                      <Button
-                        onClick={() =>
-                          setConfirmAction({
-                            title: "重置订阅 Token",
-                            description:
-                              "确定重置订阅链接的 Token 吗？旧订阅链接会立刻失效，需要在客户端重新导入新链接。",
-                            confirmLabel: "重置 Token",
-                            onConfirm: () =>
-                              resetTokenMutation.mutate(subscription.id),
-                          })
-                        }
-                        variant="secondary"
-                        className="h-8 px-2.5 rounded-lg flex items-center gap-1 text-[10px]"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5 opacity-70" />
-                        <span>重置 Token</span>
-                      </Button>
-                      <Button
-                        onClick={() => startEdit(subscription)}
-                        variant="secondary"
-                        className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
-                        title="编辑配置"
-                      >
-                        <Pencil className="h-3.5 w-3.5 text-slate-400 hover:text-white transition-colors" />
-                      </Button>
-                      <Button
-                        onClick={() =>
-                          setConfirmAction({
-                            title: "删除订阅",
-                            description:
-                              "确定删除这个订阅吗？删除后该订阅链接将无法继续访问。",
-                            confirmLabel: "删除订阅",
-                            onConfirm: () =>
-                              deleteMutation.mutate(subscription.id),
-                          })
-                        }
-                        variant="danger"
-                        className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
-                        title="删除订阅"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* 2. Clash Custom Templates Section Header */}
-      <section className="flex flex-col justify-between gap-6 sm:flex-row sm:items-center border-t border-white/[0.04] pt-10">
-        <div>
-          <h2 className="font-bold text-2xl text-slate-100 tracking-tight font-display">
-            Clash 配置模板
-          </h2>
-          <p className="mt-1 text-slate-400 text-xs font-semibold">
-            支持编辑 YAML 策略块。封装 Clash-Mihomo
-            订阅时可动态注入自定义分流、连接端口及策略代理组。
-          </p>
-        </div>
-        <Button
-          onClick={() => {
-            resetTemplateForm();
-            setIsTemplateDialogOpen(true);
-          }}
-          className="bg-white text-slate-950 hover:bg-slate-100 px-4 h-9 font-semibold text-xs tracking-wide rounded-lg flex items-center gap-1.5 w-full sm:w-auto justify-center"
+      <div className="inline-grid grid-cols-2 gap-1 rounded-lg border border-slate-800 bg-slate-950 p-1">
+        <button
+          className={tabButtonClass(activeTab === "subscriptions")}
+          onClick={() => setActiveTab("subscriptions")}
+          type="button"
         >
-          <Plus className="h-4 w-4" />
-          新增 YAML 模板
-        </Button>
-      </section>
+          客户端订阅
+        </button>
+        <button
+          className={tabButtonClass(activeTab === "templates")}
+          onClick={() => setActiveTab("templates")}
+          type="button"
+        >
+          Clash 模板
+        </button>
+      </div>
 
-      {/* Clash Custom Templates Grid */}
-      <section>
-        {clashTemplatesQuery.isLoading ? (
-          <div className="text-slate-400 text-xs font-semibold animate-pulse py-6">
-            正在与本地配置库同步...
-          </div>
-        ) : customClashTemplates.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-white/[0.04] p-16 text-center text-slate-500 text-xs font-semibold">
-            暂无自定义配置模板。请点击右上角按钮添加您的第一个 YAML 模板。
-          </div>
-        ) : (
-          <div className="grid gap-6 md:grid-cols-2">
-            {customClashTemplates.map((template) => (
-              <Card
-                className="bg-[#0e1017]/70 border-white/[0.04] p-4 sm:p-6 shadow-lg shadow-black/20 hover:border-white/[0.08] hover:-translate-y-0.5 flex flex-col justify-between min-w-0"
-                key={template.id}
-              >
-                <div>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-white/[0.03] pb-4 mb-4">
+      {/* Subscriptions Cards Grid */}
+      {activeTab === "subscriptions" && (
+        <section>
+          {subscriptionsQuery.isLoading ? (
+            <div className="text-slate-400 text-xs font-semibold animate-pulse py-6">
+              正在读取客户端订阅流数据...
+            </div>
+          ) : subscriptions.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-white/[0.04] p-16 text-center text-slate-500 text-xs font-semibold">
+              暂无订阅分发规则。请点击右上角按钮创建一条规则。
+            </div>
+          ) : (
+            <div className="grid gap-5 md:grid-cols-2">
+              {subscriptions.map((subscription) => {
+                const enabledClass = subscription.enabled
+                  ? "border-emerald-500/10 bg-emerald-500/5 text-emerald-400 font-medium"
+                  : "border-rose-500/10 bg-rose-500/5 text-rose-400 font-medium";
+
+                return (
+                  <Card
+                    className="bg-[#0e1017]/70 border-white/[0.04] p-4 sm:p-6 shadow-lg shadow-black/20 hover:border-white/[0.08] hover:-translate-y-0.5 flex flex-col justify-between min-w-0"
+                    key={subscription.id}
+                  >
                     <div>
-                      <div className="font-bold text-slate-200 text-sm tracking-wide flex items-center gap-2">
-                        <Terminal className="h-4 w-4 text-[#6366f1]" />
-                        <span>{template.name}</span>
+                      <div className="flex flex-wrap items-start justify-between gap-2.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="font-bold text-slate-200 text-sm tracking-wide">
+                            {subscription.name}
+                          </div>
+                          <Badge className={enabledClass}>
+                            <span
+                              className={cn(
+                                "mr-1 h-1 w-1 rounded-full shrink-0",
+                                subscription.enabled
+                                  ? "bg-emerald-500 animate-pulse"
+                                  : "bg-rose-500",
+                              )}
+                            />
+                            {subscription.enabled ? "正常分发" : "已禁用"}
+                          </Badge>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge className="border-slate-800 bg-slate-900/60 text-slate-400 font-mono text-[9px] px-1.5 py-0">
+                            {subscription.format}
+                          </Badge>
+                          {subscription.format === "clash-mihomo" && (
+                            <Badge className="border-violet-500/10 bg-violet-500/5 text-violet-400 text-[9px] px-1.5 py-0">
+                              {clashTemplateLabel(subscription.clashTemplate)}
+                            </Badge>
+                          )}
+                        </div>
                       </div>
-                      {template.remark && (
-                        <div className="mt-1 text-slate-500 text-[10px] font-semibold">
-                          说明: {template.remark}
+
+                      {subscription.remark && (
+                        <p className="mt-3 text-slate-400 text-xs font-semibold">
+                          备注: {subscription.remark}
+                        </p>
+                      )}
+
+                      <div className="mt-4 text-slate-500 text-xs font-semibold">
+                        封装集成代理节点数:{" "}
+                        <span className="text-slate-300 font-bold font-mono">
+                          {subscription.nodeCount}
+                        </span>{" "}
+                        个
+                      </div>
+                    </div>
+
+                    <div className="mt-6 pt-5 border-t border-white/[0.03]">
+                      {subscription.subscriptionUrl && (
+                        <div className="flex items-center gap-2">
+                          <div className="flex min-w-0 flex-1 items-center gap-2 text-slate-300 text-xs font-medium bg-[#090b11] border border-white/[0.04] rounded-lg px-3 py-2 shadow-inner">
+                            <Link2 className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+                            <code className="break-all font-mono text-[10px] select-all truncate text-slate-400">
+                              {subscription.subscriptionUrl}
+                            </code>
+                          </div>
+                          <Button
+                            onClick={() =>
+                              copySubscriptionURL(
+                                subscription.subscriptionUrl ?? "",
+                              )
+                            }
+                            variant="secondary"
+                            className="h-8 w-8 p-0 rounded-lg shrink-0 flex items-center justify-center"
+                            title="复制订阅链接"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </Button>
                         </div>
                       )}
+
+                      <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+                        <Button
+                          onClick={() =>
+                            setConfirmAction({
+                              title: "重置订阅 Token",
+                              description:
+                                "确定重置订阅链接的 Token 吗？旧订阅链接会立刻失效，需要在客户端重新导入新链接。",
+                              confirmLabel: "重置 Token",
+                              onConfirm: () =>
+                                resetTokenMutation.mutate(subscription.id),
+                            })
+                          }
+                          variant="secondary"
+                          className="h-8 px-2.5 rounded-lg flex items-center gap-1 text-[10px]"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5 opacity-70" />
+                          <span>重置 Token</span>
+                        </Button>
+                        <Button
+                          onClick={() => startEdit(subscription)}
+                          variant="secondary"
+                          className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
+                          title="编辑配置"
+                        >
+                          <Pencil className="h-3.5 w-3.5 text-slate-400 hover:text-white transition-colors" />
+                        </Button>
+                        <Button
+                          onClick={() =>
+                            setConfirmAction({
+                              title: "删除订阅",
+                              description:
+                                "确定删除这个订阅吗？删除后该订阅链接将无法继续访问。",
+                              confirmLabel: "删除订阅",
+                              onConfirm: () =>
+                                deleteMutation.mutate(subscription.id),
+                            })
+                          }
+                          variant="danger"
+                          className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
+                          title="删除订阅"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex gap-2 shrink-0">
-                      <Button
-                        onClick={() => startEditTemplate(template)}
-                        variant="secondary"
-                        className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
-                        title="编辑模板"
-                      >
-                        <Pencil className="h-3.5 w-3.5 text-slate-400 hover:text-white transition-colors" />
-                      </Button>
-                      <Button
-                        onClick={() =>
-                          setConfirmAction({
-                            title: "删除 Clash 模板",
-                            description:
-                              "确定删除这个 Clash 模板吗？正在被订阅使用的模板无法删除。",
-                            confirmLabel: "删除模板",
-                            onConfirm: () =>
-                              deleteTemplateMutation.mutate(template.id),
-                          })
-                        }
-                        variant="danger"
-                        className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
-                        title="删除模板"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
+
+      {activeTab === "templates" && (
+        <>
+          <section className="flex flex-col justify-between gap-6 sm:flex-row sm:items-center">
+            <div>
+              <h2 className="font-bold text-2xl text-slate-100 tracking-tight font-display">
+                Clash 配置模板
+              </h2>
+              <p className="mt-1 text-slate-400 text-xs font-semibold">
+                支持编辑 YAML 策略块。封装 Clash-Mihomo
+                订阅时可动态注入自定义分流、连接端口及策略代理组。
+              </p>
+            </div>
+            <Button
+              onClick={() => {
+                resetTemplateForm();
+                setIsTemplateDialogOpen(true);
+              }}
+              className="bg-white text-slate-950 hover:bg-slate-100 px-4 h-9 font-semibold text-xs tracking-wide rounded-lg flex items-center gap-1.5 w-full sm:w-auto justify-center"
+            >
+              <Plus className="h-4 w-4" />
+              新增 YAML 模板
+            </Button>
+          </section>
+
+          <section>
+            {clashTemplatesQuery.isLoading ? (
+              <div className="text-slate-400 text-xs font-semibold animate-pulse py-6">
+                正在与本地配置库同步...
+              </div>
+            ) : customClashTemplates.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-white/[0.04] p-16 text-center text-slate-500 text-xs font-semibold">
+                暂无自定义配置模板。请点击右上角按钮添加您的第一个 YAML 模板。
+              </div>
+            ) : (
+              <div className="grid gap-6 md:grid-cols-2">
+                {customClashTemplates.map((template) => (
+                  <Card
+                    className="bg-[#0e1017]/70 border-white/[0.04] p-4 sm:p-6 shadow-lg shadow-black/20 hover:border-white/[0.08] hover:-translate-y-0.5 flex flex-col justify-between min-w-0"
+                    key={template.id}
+                  >
+                    <div>
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-white/[0.03] pb-4 mb-4">
+                        <div>
+                          <div className="font-bold text-slate-200 text-sm tracking-wide flex items-center gap-2">
+                            <Terminal className="h-4 w-4 text-[#6366f1]" />
+                            <span>{template.name}</span>
+                          </div>
+                          {template.remark && (
+                            <div className="mt-1 text-slate-500 text-[10px] font-semibold">
+                              说明: {template.remark}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                          <Button
+                            onClick={() => startEditTemplate(template)}
+                            variant="secondary"
+                            className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
+                            title="编辑模板"
+                          >
+                            <Pencil className="h-3.5 w-3.5 text-slate-400 hover:text-white transition-colors" />
+                          </Button>
+                          <Button
+                            onClick={() =>
+                              setConfirmAction({
+                                title: "删除 Clash 模板",
+                                description:
+                                  "确定删除这个 Clash 模板吗？正在被订阅使用的模板无法删除。",
+                                confirmLabel: "删除模板",
+                                onConfirm: () =>
+                                  deleteTemplateMutation.mutate(template.id),
+                              })
+                            }
+                            variant="danger"
+                            className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
+                            title="删除模板"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-                <pre className="max-h-48 w-full overflow-x-auto whitespace-pre rounded-lg border border-white/[0.04] bg-[#090b11] p-4 text-emerald-400 font-mono text-[10px] leading-relaxed scrollbar-thin shadow-inner select-all">
-                  {template.content}
-                </pre>
-              </Card>
-            ))}
-          </div>
-        )}
-      </section>
+                    <pre className="max-h-48 w-full overflow-x-auto whitespace-pre rounded-lg border border-white/[0.04] bg-[#090b11] p-4 text-emerald-400 font-mono text-[10px] leading-relaxed scrollbar-thin shadow-inner select-all">
+                      {template.content}
+                    </pre>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </section>
+        </>
+      )}
 
       {/* 3. Subscription Dialog Modal */}
       <Dialog
@@ -849,6 +873,15 @@ function clashTemplateLabel(value?: string) {
   return (
     clashTemplates.find((template) => template.value === value)?.label ??
     "规则模式：国内直连"
+  );
+}
+
+function tabButtonClass(active: boolean) {
+  return cn(
+    "h-9 rounded-md px-4 text-xs font-semibold transition-all duration-200",
+    active
+      ? "bg-white text-slate-950"
+      : "text-slate-400 hover:bg-white/5 hover:text-slate-200",
   );
 }
 
