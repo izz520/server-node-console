@@ -636,6 +636,64 @@ func TestSubscriptionRenderingCustomClashTemplate(t *testing.T) {
 	}
 }
 
+func TestSubscriptionRenderingCustomClashTemplateReplacesAnchoredProxyGroups(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "sub-custom-clash-anchors", "sub-custom-clash-anchors@example.com")
+	node := importTestNode(t, app, token, "Injected Node")
+
+	templateContent := strings.Join([]string{
+		"mixed-port: 7891",
+		"proxies:",
+		"  - name: old",
+		"    type: direct",
+		"proxy-groups:",
+		"  - name: SELECT",
+		"    type: select",
+		"    proxies: &node-select",
+		"      - old",
+		"  - name: AUTO",
+		"    type: url-test",
+		"    proxies: &node-test",
+		"      - old",
+		"  - name: AI",
+		"    type: select",
+		"    proxies: *node-select",
+		"rules:",
+		"  - MATCH,SELECT",
+	}, "\n")
+	templateBody := `{"name":"Anchored Template","content":` + strconv.Quote(templateContent) + `}`
+	templateRes := performRequest(app, http.MethodPost, "/api/v1/clash-templates", templateBody, token)
+	if templateRes.Code != http.StatusCreated {
+		t.Fatalf("expected template create status 201, got %d: %s", templateRes.Code, templateRes.Body.String())
+	}
+	var template clashTemplateResponse
+	if err := json.Unmarshal(templateRes.Body.Bytes(), &template); err != nil {
+		t.Fatalf("decode template response: %v", err)
+	}
+
+	createBody := `{"name":"Anchored Clash","format":"clash-mihomo","clashTemplate":"custom","clashTemplateId":` + strconvUint(template.ID) + `,"enabled":true,"nodeIds":[` + strconvUint(node.ID) + `]}`
+	createRes := performRequest(app, http.MethodPost, "/api/v1/subscriptions", createBody, token)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createRes.Code, createRes.Body.String())
+	}
+	var subscription subscriptionResponse
+	if err := json.Unmarshal(createRes.Body.Bytes(), &subscription); err != nil {
+		t.Fatalf("decode subscription response: %v", err)
+	}
+
+	publicRes := performRequest(app, http.MethodGet, subscription.SubscriptionURL, "", "")
+	if publicRes.Code != http.StatusOK {
+		t.Fatalf("expected public status 200, got %d: %s", publicRes.Code, publicRes.Body.String())
+	}
+	body := publicRes.Body.String()
+	if !strings.Contains(body, "    proxies: &node-select\n      - \"Injected Node\"\n      - DIRECT") ||
+		!strings.Contains(body, "    proxies: &node-test\n      - \"Injected Node\"\n      - DIRECT") ||
+		!strings.Contains(body, "    proxies: *node-select") ||
+		strings.Contains(body, "      - old") {
+		t.Fatalf("unexpected anchored custom clash template content: %s", body)
+	}
+}
+
 func importTestNode(t *testing.T, app http.Handler, token string, name string) nodeResponse {
 	t.Helper()
 

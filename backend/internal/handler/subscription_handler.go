@@ -987,7 +987,12 @@ func replaceProxyGroupProxyLists(lines []string, proxyNames []string) []string {
 	for index := groupStart + 1; index < groupEnd; index++ {
 		line := lines[index]
 		out = append(out, line)
-		if strings.TrimSpace(line) != "proxies:" {
+		trimmedLine := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmedLine, "proxies:") {
+			continue
+		}
+		proxiesValue := strings.TrimSpace(strings.TrimPrefix(trimmedLine, "proxies:"))
+		if proxiesValue != "" && !strings.HasPrefix(proxiesValue, "&") {
 			continue
 		}
 		indent := leadingSpaces(line)

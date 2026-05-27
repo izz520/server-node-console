@@ -331,6 +331,7 @@ export function NodesPage() {
               const deleteRequiresUninstall =
                 node.installMethod === "system" &&
                 node.status === "install_success";
+              const hasActions = canEdit || canDelete;
 
               return (
                 <Card
@@ -341,7 +342,7 @@ export function NodesPage() {
                   key={node.id}
                 >
                   {/* Card Content Top */}
-                  <div className="p-6 pb-4">
+                  <div className="p-6 pb-4 flex-1">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-2.5">
                         <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.04] bg-white/[0.02] text-slate-300 shadow-inner shrink-0">
@@ -416,52 +417,56 @@ export function NodesPage() {
                   </div>
 
                   {/* Card Content Bottom Actions */}
-                  <div className="p-6 pt-4 border-t border-white/[0.03] bg-white/[0.01]">
-                    {node.remark && (
-                      <p className="text-[10px] text-slate-500 font-semibold mb-4 leading-normal">
-                        备注: {node.remark}
-                      </p>
-                    )}
-
-                    <div className="flex justify-end gap-2">
-                      {canEdit && (
-                        <Button
-                          onClick={() => startEdit(node)}
-                          variant="secondary"
-                          className="flex-1 h-8 rounded-lg flex items-center justify-center gap-1 text-[10px]"
-                        >
-                          <Pencil className="h-3.5 w-3.5 opacity-70" />
-                          <span>编辑参数</span>
-                        </Button>
+                  {(hasActions || node.remark) && (
+                    <div className="p-6 pt-4 border-t border-white/[0.03] bg-white/[0.01]">
+                      {node.remark && (
+                        <p className="text-[10px] text-slate-500 font-semibold mb-4 leading-normal">
+                          备注: {node.remark}
+                        </p>
                       )}
-                      {canDelete && (
-                        <Button
-                          onClick={() =>
-                            setConfirmAction({
-                              title: deleteRequiresUninstall
-                                ? "卸载并删除节点"
-                                : "删除节点",
-                              description: deleteRequiresUninstall
-                                ? "确定删除这个系统部署节点吗？系统会先在服务器上卸载核心，卸载成功后自动删除节点记录并移除相关订阅关联。"
-                                : "确定删除这个节点吗？删除后它会从节点列表和相关订阅中移除。",
-                              confirmLabel: deleteRequiresUninstall
-                                ? "卸载并删除"
-                                : "删除节点",
-                              onConfirm: () =>
-                                deleteRequiresUninstall
-                                  ? uninstallMutation.mutate(node.id)
-                                  : deleteMutation.mutate(node.id),
-                            })
-                          }
-                          variant="danger"
-                          className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
-                          title="删除节点"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+
+                      {hasActions && (
+                        <div className="flex justify-end gap-2">
+                          {canEdit && (
+                            <Button
+                              onClick={() => startEdit(node)}
+                              variant="secondary"
+                              className="flex-1 h-8 rounded-lg flex items-center justify-center gap-1 text-[10px]"
+                            >
+                              <Pencil className="h-3.5 w-3.5 opacity-70" />
+                              <span>编辑参数</span>
+                            </Button>
+                          )}
+                          {canDelete && (
+                            <Button
+                              onClick={() =>
+                                setConfirmAction({
+                                  title: deleteRequiresUninstall
+                                    ? "卸载并删除节点"
+                                    : "删除节点",
+                                  description: deleteRequiresUninstall
+                                    ? "确定删除这个系统部署节点吗？系统会先在服务器上卸载核心，卸载成功后自动删除节点记录并移除相关订阅关联。"
+                                    : "确定删除这个节点吗？删除后它会从节点列表和相关订阅中移除。",
+                                  confirmLabel: deleteRequiresUninstall
+                                    ? "卸载并删除"
+                                    : "删除节点",
+                                  onConfirm: () =>
+                                    deleteRequiresUninstall
+                                      ? uninstallMutation.mutate(node.id)
+                                      : deleteMutation.mutate(node.id),
+                                })
+                              }
+                              variant="danger"
+                              className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
+                              title="删除节点"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
                       )}
                     </div>
-                  </div>
+                  )}
                 </Card>
               );
             })}
