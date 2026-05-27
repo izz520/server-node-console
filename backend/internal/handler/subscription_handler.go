@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"server-sing-box-2/backend/internal/converter"
 	"server-sing-box-2/backend/internal/domain"
 	"server-sing-box-2/backend/internal/security"
 
@@ -524,7 +526,16 @@ func subscriptionNodeViewFromNode(node domain.ProtocolNode, byID map[uint]domain
 		port = *node.PublicPort
 	}
 	rawLink := firstNonEmpty(config.RawLink, mapValue(encryptedValues, encryptedRawLinkKey))
-	sensitiveValues := mergeStringMaps(parseShareLinkValues(rawLink), encryptedValues)
+	rawLinkValues := parseShareLinkValues(rawLink)
+	sensitiveValues := mergeStringMaps(rawLinkValues, encryptedValues)
+	if rawLink != "" {
+		sensitiveValues = mergeStringMaps(encryptedValues, rawLinkValues)
+		if node.PublicPort == nil && node.InstallMethod == domain.NodeInstallMethodSystem {
+			if endpoint, ok := shareLinkEndpointFromRawLink(rawLink); ok {
+				port = endpoint.Port
+			}
+		}
+	}
 	if config.ChainProxyNodeID != nil {
 		if upstream, ok := byID[*config.ChainProxyNodeID]; ok {
 			sensitiveValues["dialer-proxy"] = upstream.Name
@@ -651,6 +662,9 @@ func parseShareLinkValues(rawLink string) map[string]string {
 	rawLink = strings.TrimSpace(rawLink)
 	if rawLink == "" {
 		return values
+	}
+	if converted := converter.ParseKnownShareLinkValues(rawLink); len(converted) > 0 {
+		values = mergeStringMaps(values, converted)
 	}
 	if strings.HasPrefix(rawLink, "vmess://") {
 		encoded := strings.TrimPrefix(rawLink, "vmess://")
@@ -1134,12 +1148,13 @@ func (node subscriptionNodeView) clashProxyLines() []string {
 		if strings.TrimSpace(node.Password) != "" {
 			lines = append(lines, "    password: "+yamlQuote(strings.TrimSpace(node.Password)))
 		}
-		lines = appendClashField(lines, "client-fingerprint", node.Fingerprint)
+		lines = appendClashField(lines, "client-fingerprint", firstNonEmpty(node.Fingerprint, "firefox"))
 		lines = appendClashBoolField(lines, "udp", mapValue(node.Values, "udp"))
-		lines = appendClashField(lines, "idle-session-check-interval", mapValue(node.Values, "idle-session-check-interval"))
-		lines = appendClashField(lines, "idle-session-timeout", mapValue(node.Values, "idle-session-timeout"))
+		lines = appendClashField(lines, "idle-session-check-interval", firstNonEmpty(mapValue(node.Values, "idle-session-check-interval"), "30"))
+		lines = appendClashField(lines, "idle-session-timeout", firstNonEmpty(mapValue(node.Values, "idle-session-timeout"), "30"))
 		lines = appendClashField(lines, "min-idle-session", mapValue(node.Values, "min-idle-session"))
 		lines = appendClashField(lines, "sni", firstNonEmpty(node.Peer, node.ServerName))
+		lines = appendClashField(lines, "fingerprint", node.HPKP)
 		lines = appendClashALPN(lines, mapValue(node.Values, "alpn"))
 		lines = appendClashBool(lines, "skip-cert-verify", node.Insecure || node.AllowInsecure)
 	case "trojan":
@@ -1364,7 +1379,60 @@ func appendCommonClashFields(lines []string, values map[string]string) []string 
 	lines = appendClashField(lines, "routing-mark", mapValue(values, "routing-mark"))
 	lines = appendClashBoolField(lines, "mptcp", mapValue(values, "mptcp"))
 	lines = appendClashField(lines, "dialer-proxy", mapValue(values, "dialer-proxy"))
+	lines = appendUnknownClashFields(lines, values)
 	return lines
+}
+
+func appendUnknownClashFields(lines []string, values map[string]string) []string {
+	written := map[string]struct{}{}
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		key, _, ok := strings.Cut(trimmed, ":")
+		if ok {
+			written[key] = struct{}{}
+		}
+	}
+	for _, key := range sortedStringKeys(values) {
+		if !isSafeClashFieldKey(key) || isInternalNodeValueKey(key) {
+			continue
+		}
+		if _, ok := written[key]; ok {
+			continue
+		}
+		lines = appendClashField(lines, key, values[key])
+	}
+	return lines
+}
+
+func sortedStringKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func isSafeClashFieldKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for _, r := range key {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isInternalNodeValueKey(key string) bool {
+	switch key {
+	case encryptedRawLinkKey, "id", "uuid", "password", "passwd", "pass", "method", "type", "security", "address", "server", "add", "port", "name", "ps", "fp", "sni", "server_name", "serverName", "servername", "pbk", "public-key", "public_key", "sid", "short-id", "short_id", "spx", "spider-x", "spider_x", "peer", "hpkp", "pin", "certificate_public_key_sha256", "allowInsecure", "allow_insecure":
+		return true
+	default:
+		return false
+	}
 }
 
 func (node subscriptionNodeView) toSingBoxOutbound() map[string]any {
@@ -1388,12 +1456,27 @@ func (node subscriptionNodeView) toSingBoxOutbound() map[string]any {
 
 func (node subscriptionNodeView) shareLine() string {
 	if strings.TrimSpace(node.RawLink) != "" {
-		return strings.TrimSpace(node.RawLink)
+		return shareLinkWithEndpoint(strings.TrimSpace(node.RawLink), node.Address, node.Port)
 	}
 	if normalizedProtocol(node.Protocol) == "anytls" && strings.TrimSpace(node.UUID) != "" {
 		return fmt.Sprintf("%s://%s@%s:%d%s#%s", node.shareScheme(), url.QueryEscape(strings.TrimSpace(node.UUID)), node.Address, node.Port, node.anyTLSQuery(), urlQueryEscape(node.Name))
 	}
 	return fmt.Sprintf("%s://%s:%d#%s", node.shareScheme(), node.Address, node.Port, urlQueryEscape(node.Name))
+}
+
+func shareLinkWithEndpoint(rawLink string, address string, port int) string {
+	address = strings.TrimSpace(address)
+	if rawLink == "" || address == "" || port <= 0 {
+		return rawLink
+	}
+	parsed, err := url.Parse(rawLink)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return rawLink
+	}
+	if strings.EqualFold(parsed.Hostname(), address) && parsed.Port() == strconv.Itoa(port) {
+		return rawLink
+	}
+	return strings.Replace(rawLink, parsed.Host, net.JoinHostPort(address, strconv.Itoa(port)), 1)
 }
 
 func (node subscriptionNodeView) anyTLSQuery() string {

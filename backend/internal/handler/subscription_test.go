@@ -757,6 +757,81 @@ func TestClashSubscriptionParsesSocks5CredentialsFromRawLink(t *testing.T) {
 	}
 }
 
+func TestClashSubscriptionRendersAnyTLSHPKPAsFingerprint(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "anytls-hpkp", "anytls-hpkp@example.com")
+	rawLink := "anytls://7626bc8a-22c6-4c69-af8d-10357cb9145b@43.255.159.75:20844?peer=addons.mozilla.org&udp=1&hpkp=AA:9F:FC:25:A2:EF:D2:9E:F0:D4:A8:39:A2:C2:7C:C0:B8:CF:39:C4:6A:71:70:FD:E7:C1:3A:10:97:AB:32:23#%F0%9F%87%AD%F0%9F%87%B0%205SSR-HK-FREE"
+	nodeBody := `{"mode":"link","rawLink":"` + rawLink + `"}`
+	nodeRes := performRequest(app, http.MethodPost, "/api/v1/nodes/import", nodeBody, token)
+	if nodeRes.Code != http.StatusCreated {
+		t.Fatalf("import anytls node failed: %d %s", nodeRes.Code, nodeRes.Body.String())
+	}
+	var node nodeResponse
+	if err := json.Unmarshal(nodeRes.Body.Bytes(), &node); err != nil {
+		t.Fatalf("decode node: %v", err)
+	}
+
+	subscriptionBody := `{"name":"AnyTLS Clash","format":"clash-mihomo","clashTemplate":"rule-cn","enabled":true,"nodeIds":[` + strconvUint(node.ID) + `]}`
+	res := performRequest(app, http.MethodPost, "/api/v1/subscriptions", subscriptionBody, token)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("create subscription failed: %d %s", res.Code, res.Body.String())
+	}
+	var subscription subscriptionResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &subscription); err != nil {
+		t.Fatalf("decode subscription: %v", err)
+	}
+
+	publicRes := performRequest(app, http.MethodGet, "/sub/"+subscription.Token, "", "")
+	body := publicRes.Body.String()
+	for _, want := range []string{
+		`password: "7626bc8a-22c6-4c69-af8d-10357cb9145b"`,
+		`client-fingerprint: "firefox"`,
+		`udp: true`,
+		`idle-session-check-interval: 30`,
+		`idle-session-timeout: 30`,
+		`sni: "addons.mozilla.org"`,
+		`fingerprint: "AA:9F:FC:25:A2:EF:D2:9E:F0:D4:A8:39:A2:C2:7C:C0:B8:CF:39:C4:6A:71:70:FD:E7:C1:3A:10:97:AB:32:23"`,
+		`skip-cert-verify: false`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected anytls clash output to contain %q, got: %s", want, body)
+		}
+	}
+}
+
+func TestClashSubscriptionPreservesUnknownSafeQueryFields(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "unknown-query-fields", "unknown-query-fields@example.com")
+	rawLink := "socks5://user:pass@127.0.0.1:1080?udp=1&dialer-proxy=Upstream&custom-field=kept&unsafe.field=drop#Local-Socks"
+	nodeBody := `{"mode":"link","rawLink":"` + rawLink + `"}`
+	nodeRes := performRequest(app, http.MethodPost, "/api/v1/nodes/import", nodeBody, token)
+	if nodeRes.Code != http.StatusCreated {
+		t.Fatalf("import socks5 node failed: %d %s", nodeRes.Code, nodeRes.Body.String())
+	}
+	var node nodeResponse
+	if err := json.Unmarshal(nodeRes.Body.Bytes(), &node); err != nil {
+		t.Fatalf("decode node: %v", err)
+	}
+
+	subscriptionBody := `{"name":"Unknown Fields","format":"clash-mihomo","clashTemplate":"rule-cn","enabled":true,"nodeIds":[` + strconvUint(node.ID) + `]}`
+	res := performRequest(app, http.MethodPost, "/api/v1/subscriptions", subscriptionBody, token)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("create subscription failed: %d %s", res.Code, res.Body.String())
+	}
+	var subscription subscriptionResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &subscription); err != nil {
+		t.Fatalf("decode subscription: %v", err)
+	}
+
+	publicRes := performRequest(app, http.MethodGet, "/sub/"+subscription.Token, "", "")
+	body := publicRes.Body.String()
+	if !strings.Contains(body, `custom-field: "kept"`) ||
+		!strings.Contains(body, `dialer-proxy: "Upstream"`) ||
+		strings.Contains(body, `unsafe.field`) {
+		t.Fatalf("expected safe unknown query fields to be preserved: %s", body)
+	}
+}
+
 func importTestNode(t *testing.T, app http.Handler, token string, name string) nodeResponse {
 	t.Helper()
 

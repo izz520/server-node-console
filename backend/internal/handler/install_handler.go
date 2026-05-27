@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -331,6 +332,10 @@ func applyInstallRawLinkValues(req *installNodeRequest, rawLink string) {
 	if rawLink == "" || strings.HasPrefix(rawLink, "vmess://") {
 		return
 	}
+	values := parseShareLinkValues(rawLink)
+	if protocolNeedsUUID(req.Protocol) {
+		req.UUID = installFirstNonEmpty(mapValue(values, "uuid", "id", "password", "passwd", "pass"), req.UUID)
+	}
 	parsed, err := url.Parse(rawLink)
 	if err != nil {
 		return
@@ -346,6 +351,82 @@ func applyInstallRawLinkValues(req *installNodeRequest, rawLink string) {
 	query := parsed.Query()
 	req.RealityDomain = installFirstNonEmpty(req.RealityDomain, query.Get("sni"), query.Get("servername"))
 	req.CDNDomain = installFirstNonEmpty(req.CDNDomain, query.Get("host"))
+}
+
+type shareLinkEndpoint struct {
+	Address string
+	Port    int
+}
+
+func shareLinkEndpointFromRawLink(rawLink string) (shareLinkEndpoint, bool) {
+	rawLink = strings.TrimSpace(rawLink)
+	if rawLink == "" {
+		return shareLinkEndpoint{}, false
+	}
+	values := parseShareLinkValues(rawLink)
+	if address := installFirstNonEmpty(mapValue(values, "address", "server", "add")); address != "" {
+		if port, err := strconv.Atoi(mapValue(values, "port")); err == nil && port > 0 {
+			return shareLinkEndpoint{Address: address, Port: port}, true
+		}
+	}
+	if strings.HasPrefix(strings.ToLower(rawLink), "ss://") {
+		return shadowsocksEndpointFromRawLink(rawLink)
+	}
+	parsed, err := url.Parse(rawLink)
+	if err != nil {
+		return shareLinkEndpoint{}, false
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil || port == 0 || strings.TrimSpace(parsed.Hostname()) == "" {
+		return shareLinkEndpoint{}, false
+	}
+	return shareLinkEndpoint{Address: parsed.Hostname(), Port: port}, true
+}
+
+func shadowsocksEndpointFromRawLink(rawLink string) (shareLinkEndpoint, bool) {
+	withoutScheme := strings.TrimPrefix(rawLink, "ss://")
+	mainPart := withoutScheme
+	if index := strings.IndexAny(mainPart, "?#"); index >= 0 {
+		mainPart = mainPart[:index]
+	}
+	if !strings.Contains(mainPart, "@") {
+		decoded := decodeBase64String(mainPart)
+		if decoded == "" {
+			return shareLinkEndpoint{}, false
+		}
+		mainPart = decoded
+	}
+	_, hostPort, ok := strings.Cut(mainPart, "@")
+	if !ok {
+		return shareLinkEndpoint{}, false
+	}
+	host, portText, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		if strings.Count(hostPort, ":") != 1 {
+			return shareLinkEndpoint{}, false
+		}
+		host, portText, _ = strings.Cut(hostPort, ":")
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(portText))
+	if err != nil || port == 0 || strings.TrimSpace(host) == "" {
+		return shareLinkEndpoint{}, false
+	}
+	return shareLinkEndpoint{Address: strings.Trim(strings.TrimSpace(host), "[]"), Port: port}, true
+}
+
+func (h *Handler) updatedSubscriptionConfigFromOutput(nodeID uint, endpoint shareLinkEndpoint, rawLink string) (string, bool) {
+	var node domain.ProtocolNode
+	if err := h.db.Select("subscription_config_json").First(&node, nodeID).Error; err != nil {
+		return "", false
+	}
+	config := nodeConfig{}
+	_ = json.Unmarshal([]byte(node.SubscriptionConfigJSON), &config)
+	if strings.TrimSpace(config.Address) == "" {
+		config.Address = endpoint.Address
+	}
+	config.Port = endpoint.Port
+	config.RawLink = strings.TrimSpace(rawLink)
+	return updateNodeConfigJSON(node.SubscriptionConfigJSON, config), true
 }
 
 func installFirstNonEmpty(values ...string) string {
@@ -403,6 +484,12 @@ func (h *Handler) updateInstalledTargetsFromOutput(taskID uint, targets []instal
 				nodeUpdates["encrypted_protocol_json"] = encryptedConfig
 			} else {
 				h.appendTaskLog(taskID, "error", "encrypt extracted share link failed: "+err.Error())
+			}
+			if endpoint, ok := shareLinkEndpointFromRawLink(rawLink); ok {
+				nodeUpdates["listen_port"] = endpoint.Port
+				if configJSON, ok := h.updatedSubscriptionConfigFromOutput(target.NodeID, endpoint, rawLink); ok {
+					nodeUpdates["subscription_config_json"] = configJSON
+				}
 			}
 		}
 		h.db.Model(&domain.ProtocolNode{}).Where("id = ?", target.NodeID).Updates(nodeUpdates)
@@ -469,10 +556,17 @@ func (h *Handler) encryptInstallConfig(req installNodeRequest) (string, error) {
 
 func (h *Handler) encryptInstallConfigWithRawLink(req installNodeRequest, rawLink string) (string, error) {
 	sensitive := map[string]string{}
-	if req.UUID != "" {
+	if rawLink != "" {
+		for key, value := range parseShareLinkValues(rawLink) {
+			if strings.TrimSpace(value) != "" {
+				sensitive[key] = strings.TrimSpace(value)
+			}
+		}
+	}
+	if req.UUID != "" && sensitive["uuid"] == "" {
 		sensitive["uuid"] = req.UUID
 	}
-	if strings.Contains(strings.ToLower(req.Protocol), "shadowsocks") && req.UUID != "" {
+	if strings.Contains(strings.ToLower(req.Protocol), "shadowsocks") && req.UUID != "" && sensitive["password"] == "" {
 		sensitive["password"] = req.UUID
 		sensitive["cipher"] = "2022-blake3-aes-128-gcm"
 	}
