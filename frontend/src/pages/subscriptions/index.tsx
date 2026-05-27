@@ -27,6 +27,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
@@ -37,6 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { useToastStore } from "@/stores/toast";
 import type { Subscription } from "@/types/domain";
 
 const subscriptionFormats = [
@@ -70,6 +72,13 @@ const emptyTemplateForm: ClashTemplatePayload = {
   remark: "",
 };
 
+type ConfirmAction = {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+};
+
 export function SubscriptionsPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<SubscriptionPayload>(emptyForm);
@@ -81,6 +90,10 @@ export function SubscriptionsPage() {
     null,
   );
   const [message, setMessage] = useState("");
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(
+    null,
+  );
+  const addToast = useToastStore((state) => state.addToast);
 
   // Dialog State controls
   const [isSubDialogOpen, setIsSubDialogOpen] = useState(false);
@@ -122,7 +135,7 @@ export function SubscriptionsPage() {
       await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
     },
     onError: (error) => {
-      alert(getErrorMessage(error, "订阅删除失败"));
+      addToast(getErrorMessage(error, "订阅删除失败"), "error");
     },
   });
 
@@ -130,10 +143,10 @@ export function SubscriptionsPage() {
     mutationFn: resetSubscriptionToken,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
-      alert("订阅 Token 已重置，旧链接已失效");
+      addToast("订阅 Token 已重置，旧链接已失效", "success");
     },
     onError: (error) => {
-      alert(getErrorMessage(error, "重置 token 失败"));
+      addToast(getErrorMessage(error, "重置 token 失败"), "error");
     },
   });
 
@@ -158,7 +171,7 @@ export function SubscriptionsPage() {
       await queryClient.invalidateQueries({ queryKey: ["clash-templates"] });
     },
     onError: (error) => {
-      alert(getErrorMessage(error, "Clash 模板删除失败"));
+      addToast(getErrorMessage(error, "Clash 模板删除失败"), "error");
     },
   });
 
@@ -193,9 +206,9 @@ export function SubscriptionsPage() {
       : `${window.location.origin}${url}`;
     try {
       await navigator.clipboard.writeText(fullURL);
-      alert("订阅链接已成功复制到剪贴板");
+      addToast("订阅链接已成功复制到剪贴板", "success");
     } catch {
-      alert("复制失败，请手动选择并复制订阅链接");
+      addToast("复制失败，请手动选择并复制订阅链接", "error");
     }
   }
 
@@ -364,15 +377,16 @@ export function SubscriptionsPage() {
 
                     <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
                       <Button
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              "确定重置订阅链接的 Token 吗？旧的订阅链接将会立刻失效，您需要重新在客户端中导入新链接。",
-                            )
-                          ) {
-                            resetTokenMutation.mutate(subscription.id);
-                          }
-                        }}
+                        onClick={() =>
+                          setConfirmAction({
+                            title: "重置订阅 Token",
+                            description:
+                              "确定重置订阅链接的 Token 吗？旧订阅链接会立刻失效，需要在客户端重新导入新链接。",
+                            confirmLabel: "重置 Token",
+                            onConfirm: () =>
+                              resetTokenMutation.mutate(subscription.id),
+                          })
+                        }
                         variant="secondary"
                         className="h-8 px-2.5 rounded-lg flex items-center gap-1 text-[10px]"
                       >
@@ -388,11 +402,16 @@ export function SubscriptionsPage() {
                         <Pencil className="h-3.5 w-3.5 text-slate-400 hover:text-white transition-colors" />
                       </Button>
                       <Button
-                        onClick={() => {
-                          if (window.confirm("确定删除这个订阅吗？")) {
-                            deleteMutation.mutate(subscription.id);
-                          }
-                        }}
+                        onClick={() =>
+                          setConfirmAction({
+                            title: "删除订阅",
+                            description:
+                              "确定删除这个订阅吗？删除后该订阅链接将无法继续访问。",
+                            confirmLabel: "删除订阅",
+                            onConfirm: () =>
+                              deleteMutation.mutate(subscription.id),
+                          })
+                        }
                         variant="danger"
                         className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
                         title="删除订阅"
@@ -471,11 +490,16 @@ export function SubscriptionsPage() {
                         <Pencil className="h-3.5 w-3.5 text-slate-400 hover:text-white transition-colors" />
                       </Button>
                       <Button
-                        onClick={() => {
-                          if (window.confirm("确定删除这个模板吗？")) {
-                            deleteTemplateMutation.mutate(template.id);
-                          }
-                        }}
+                        onClick={() =>
+                          setConfirmAction({
+                            title: "删除 Clash 模板",
+                            description:
+                              "确定删除这个 Clash 模板吗？正在被订阅使用的模板无法删除。",
+                            confirmLabel: "删除模板",
+                            onConfirm: () =>
+                              deleteTemplateMutation.mutate(template.id),
+                          })
+                        }
                         variant="danger"
                         className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
                         title="删除模板"
@@ -801,6 +825,22 @@ export function SubscriptionsPage() {
           </div>
         </form>
       </Dialog>
+      <ConfirmDialog
+        isOpen={Boolean(confirmAction)}
+        title={confirmAction?.title ?? ""}
+        description={confirmAction?.description ?? ""}
+        confirmLabel={confirmAction?.confirmLabel}
+        isPending={
+          deleteMutation.isPending ||
+          resetTokenMutation.isPending ||
+          deleteTemplateMutation.isPending
+        }
+        onClose={() => setConfirmAction(null)}
+        onConfirm={() => {
+          confirmAction?.onConfirm();
+          setConfirmAction(null);
+        }}
+      />
     </div>
   );
 }

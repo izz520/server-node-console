@@ -170,9 +170,13 @@ export async function installNode(payload: NodeInstallPayload) {
   return data;
 }
 
-export async function uninstallNode(id: number) {
+export async function uninstallNode(
+  id: number,
+  payload?: { deleteAfterUninstall?: boolean },
+) {
   const { data } = await request.post<{ node: ProtocolNode; task: Task }>(
     `/nodes/${id}/uninstall`,
+    payload ?? {},
   );
   return data;
 }

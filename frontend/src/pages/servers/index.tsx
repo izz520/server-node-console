@@ -18,6 +18,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
@@ -65,6 +66,13 @@ const emptyNATForm: NATMappingPayload = {
   remark: "",
 };
 
+type ConfirmAction = {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+};
+
 function getDaysLeft(expiresAtStr?: string | null) {
   if (!expiresAtStr) return null;
   const expiresAt = new Date(expiresAtStr);
@@ -88,6 +96,9 @@ export function ServersPage() {
   const [selectedServerID, setSelectedServerID] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [natMessage, setNATMessage] = useState("");
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(
+    null,
+  );
 
   // Dialog State controls
   const [isServerDialogOpen, setIsServerDialogOpen] = useState(false);
@@ -129,7 +140,7 @@ export function ServersPage() {
       await queryClient.invalidateQueries({ queryKey: ["servers"] });
     },
     onError: (error) => {
-      alert(getErrorMessage(error, "删除失败"));
+      addToast(getErrorMessage(error, "删除失败"), "error");
     },
   });
 
@@ -438,11 +449,15 @@ export function ServersPage() {
                       <Pencil className="h-3.5 w-3.5 text-slate-400 hover:text-white transition-colors" />
                     </Button>
                     <Button
-                      onClick={() => {
-                        if (window.confirm("确定删除这台服务器吗？")) {
-                          deleteMutation.mutate(server.id);
-                        }
-                      }}
+                      onClick={() =>
+                        setConfirmAction({
+                          title: "删除服务器",
+                          description:
+                            "确定删除这台服务器吗？删除前请确认没有仍在使用的节点、订阅或 NAT 映射依赖它。",
+                          confirmLabel: "删除服务器",
+                          onConfirm: () => deleteMutation.mutate(server.id),
+                        })
+                      }
                       variant="danger"
                       className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
                       title="删除服务器"
@@ -856,8 +871,14 @@ export function ServersPage() {
                             </Button>
                             <Button
                               onClick={() =>
-                                window.confirm("确定删除这条 NAT 映射吗？") &&
-                                deleteNATMutation.mutate(mapping.id)
+                                setConfirmAction({
+                                  title: "删除 NAT 映射",
+                                  description:
+                                    "确定删除这条 NAT 映射吗？删除后订阅将不再使用这个公网端口映射。",
+                                  confirmLabel: "删除映射",
+                                  onConfirm: () =>
+                                    deleteNATMutation.mutate(mapping.id),
+                                })
                               }
                               variant="danger"
                               className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
@@ -876,6 +897,18 @@ export function ServersPage() {
           </div>
         </div>
       </Dialog>
+      <ConfirmDialog
+        isOpen={Boolean(confirmAction)}
+        title={confirmAction?.title ?? ""}
+        description={confirmAction?.description ?? ""}
+        confirmLabel={confirmAction?.confirmLabel}
+        isPending={deleteMutation.isPending || deleteNATMutation.isPending}
+        onClose={() => setConfirmAction(null)}
+        onConfirm={() => {
+          confirmAction?.onConfirm();
+          setConfirmAction(null);
+        }}
+      />
     </div>
   );
 }

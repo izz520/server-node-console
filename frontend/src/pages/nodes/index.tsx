@@ -3,6 +3,7 @@ import {
   ArrowUpRight,
   Cpu,
   LinkIcon,
+  LoaderCircle,
   Pencil,
   Plus,
   Server,
@@ -25,6 +26,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
@@ -34,11 +36,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SUPPORTED_PROTOCOLS } from "@/constants/protocols";
+import {
+  getInstallProtocolFieldConfig,
+  type InstallField,
+  SUPPORTED_PROTOCOLS,
+} from "@/constants/protocols";
 import { cn } from "@/lib/utils";
+import { useToastStore } from "@/stores/toast";
 import type { ProtocolNode } from "@/types/domain";
 
-type ImportMode = "manual" | "link" | "install";
+type ImportMode = "link" | "install";
+type ConfirmAction = {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+};
 
 const emptyManualForm = {
   name: "",
@@ -69,17 +82,87 @@ const emptyInstallForm = {
   argoToken: "",
   namePrefix: "",
   remark: "",
+  shareLink: "",
 };
+
+/** Frontend parser: extract fields from a share link to pre-fill install form */
+function _parseShareLinkToInstall(
+  link: string,
+  current: typeof emptyInstallForm,
+): typeof emptyInstallForm {
+  const trimmed = link.trim();
+  if (!trimmed) return { ...current, shareLink: "" };
+
+  // vmess:// is base64-encoded JSON
+  if (trimmed.startsWith("vmess://")) {
+    try {
+      const encoded = trimmed.replace("vmess://", "");
+      const decoded = atob(encoded);
+      const json = JSON.parse(decoded);
+      return {
+        ...current,
+        shareLink: trimmed,
+        name: current.name || (json.ps as string) || `vmess-${json.add}`,
+        protocol: "Vmess-ws",
+        port: current.port || String(json.port || ""),
+        uuid: current.uuid || (json.id as string) || "",
+      };
+    } catch {
+      return { ...current, shareLink: trimmed };
+    }
+  }
+
+  // Standard URI: vless://, hysteria2://, hy2://, tuic://, ss://, trojan://, socks5://
+  try {
+    const url = new URL(trimmed);
+    const scheme = url.protocol.replace(":", "").toLowerCase();
+
+    const protocolMap: Record<string, string> = {
+      vless: "Vless-tcp-reality-vision",
+      trojan: "AnyTLS",
+      ss: "Shadowsocks-2022",
+      hysteria2: "Hysteria2",
+      hy2: "Hysteria2",
+      tuic: "Tuic",
+      socks: "Socks5",
+      socks5: "Socks5",
+    };
+
+    const protocol = protocolMap[scheme] || current.protocol;
+    const fragment = decodeURIComponent(url.hash.replace("#", ""));
+    const name = current.name || fragment || `${scheme}-${url.hostname}`;
+    const port = current.port || url.port || "";
+    // For vless/trojan the userinfo is typically the UUID
+    const uuid =
+      current.uuid ||
+      (scheme === "vless" || scheme === "trojan" ? url.username : "");
+
+    return {
+      ...current,
+      shareLink: trimmed,
+      name,
+      protocol,
+      port,
+      uuid,
+    };
+  } catch {
+    return { ...current, shareLink: trimmed };
+  }
+}
 
 export function NodesPage() {
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<ImportMode>("manual");
+  const [mode, setMode] = useState<ImportMode>("install");
   const [manualForm, setManualForm] = useState(emptyManualForm);
   const [linkForm, setLinkForm] = useState(emptyLinkForm);
   const [installForm, setInstallForm] = useState(emptyInstallForm);
   const [editingNode, setEditingNode] = useState<ProtocolNode | null>(null);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(
+    null,
+  );
   const [message, setMessage] = useState("");
   const [isNodeDialogOpen, setIsNodeDialogOpen] = useState(false);
+  const addToast = useToastStore((state) => state.addToast);
 
   const nodesQuery = useQuery({
     queryKey: ["nodes"],
@@ -103,7 +186,7 @@ export function NodesPage() {
           (response) => response.node,
         );
       }
-      return importNode(buildImportPayload(mode, manualForm, linkForm));
+      return importNode(buildImportPayload(linkForm));
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["nodes"] });
@@ -121,23 +204,25 @@ export function NodesPage() {
       await queryClient.invalidateQueries({ queryKey: ["nodes"] });
     },
     onError: (error) => {
-      alert(getErrorMessage(error, "节点删除失败"));
+      addToast(getErrorMessage(error, "节点删除失败"), "error");
     },
   });
 
   const uninstallMutation = useMutation({
-    mutationFn: uninstallNode,
+    mutationFn: (id: number) =>
+      uninstallNode(id, { deleteAfterUninstall: true }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["nodes"] });
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
-      alert("卸载任务已创建，请前往任务日志查看进度");
+      addToast("卸载并删除任务已创建，请前往任务日志查看进度", "success");
     },
     onError: (error) => {
-      alert(getErrorMessage(error, "卸载任务创建失败"));
+      addToast(getErrorMessage(error, "卸载任务创建失败"), "error");
     },
   });
 
   const nodes = nodesQuery.data ?? [];
+  const visibleNodes = nodes.filter((node) => node.status !== "uninstalled");
   const servers = serversQuery.data ?? [];
 
   const findServerName = (node: ProtocolNode) => {
@@ -163,7 +248,9 @@ export function NodesPage() {
   }
 
   function startEdit(node: ProtocolNode) {
-    setMode("manual");
+    if (node.status === "uninstalled") {
+      return;
+    }
     setEditingNode(node);
     setManualForm({
       name: node.name,
@@ -186,7 +273,7 @@ export function NodesPage() {
     setLinkForm(emptyLinkForm);
     setInstallForm(emptyInstallForm);
     setEditingNode(null);
-    setMode("manual");
+    setMode("install");
     setMessage("");
   }
 
@@ -220,23 +307,37 @@ export function NodesPage() {
           <div className="text-slate-400 text-xs font-semibold animate-pulse py-10">
             正在拉取多协议节点数据...
           </div>
-        ) : nodes.length === 0 ? (
+        ) : visibleNodes.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-white/[0.04] p-16 text-center text-slate-500 text-xs font-semibold">
             还没有任何协议节点。请点击右上角按钮新建或粘贴链接导入节点。
           </div>
         ) : (
           <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-            {nodes.map((node) => {
+            {visibleNodes.map((node) => {
               const isSuccess =
                 node.status === "install_success" || node.status === "imported";
               const isFailed = node.status === "install_failed";
               const isProgress = ["installing", "uninstalling"].includes(
                 node.status,
               );
+              const canEdit =
+                node.installMethod === "external" ||
+                (node.installMethod === "system" &&
+                  node.status === "install_success");
+              const canDelete =
+                node.installMethod === "external" ||
+                node.status === "install_success" ||
+                node.status === "install_failed";
+              const deleteRequiresUninstall =
+                node.installMethod === "system" &&
+                node.status === "install_success";
 
               return (
                 <Card
-                  className="bg-[#0e1017]/70 border-white/[0.04] shadow-lg shadow-black/20 hover:border-white/[0.08] hover:-translate-y-0.5 flex flex-col justify-between"
+                  className={cn(
+                    "bg-[#0e1017]/70 border-white/[0.04] shadow-lg shadow-black/20 flex flex-col justify-between",
+                    "hover:border-white/[0.08] hover:-translate-y-0.5",
+                  )}
                   key={node.id}
                 >
                   {/* Card Content Top */}
@@ -322,9 +423,8 @@ export function NodesPage() {
                       </p>
                     )}
 
-                    <div className="flex gap-2">
-                      {(node.installMethod === "external" ||
-                        node.installMethod === "system") && (
+                    <div className="flex justify-end gap-2">
+                      {canEdit && (
                         <Button
                           onClick={() => startEdit(node)}
                           variant="secondary"
@@ -334,14 +434,25 @@ export function NodesPage() {
                           <span>编辑参数</span>
                         </Button>
                       )}
-                      {(node.installMethod === "external" ||
-                        node.status === "uninstalled") && (
+                      {canDelete && (
                         <Button
-                          onClick={() => {
-                            if (window.confirm("确定删除这个节点吗？")) {
-                              deleteMutation.mutate(node.id);
-                            }
-                          }}
+                          onClick={() =>
+                            setConfirmAction({
+                              title: deleteRequiresUninstall
+                                ? "卸载并删除节点"
+                                : "删除节点",
+                              description: deleteRequiresUninstall
+                                ? "确定删除这个系统部署节点吗？系统会先在服务器上卸载核心，卸载成功后自动删除节点记录并移除相关订阅关联。"
+                                : "确定删除这个节点吗？删除后它会从节点列表和相关订阅中移除。",
+                              confirmLabel: deleteRequiresUninstall
+                                ? "卸载并删除"
+                                : "删除节点",
+                              onConfirm: () =>
+                                deleteRequiresUninstall
+                                  ? uninstallMutation.mutate(node.id)
+                                  : deleteMutation.mutate(node.id),
+                            })
+                          }
                           variant="danger"
                           className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
                           title="删除节点"
@@ -349,24 +460,6 @@ export function NodesPage() {
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       )}
-                      {node.installMethod === "system" &&
-                        node.status === "install_success" && (
-                          <Button
-                            onClick={() => {
-                              if (
-                                window.confirm(
-                                  "确定卸载这个系统安装节点吗？这将会在服务器上运行卸载脚本。",
-                                )
-                              ) {
-                                uninstallMutation.mutate(node.id);
-                              }
-                            }}
-                            variant="danger"
-                            className="flex-1 h-8 rounded-lg text-xs font-semibold"
-                          >
-                            卸载核心
-                          </Button>
-                        )}
                     </div>
                   </div>
                 </Card>
@@ -387,13 +480,13 @@ export function NodesPage() {
         size="md"
       >
         {!editingNode && (
-          <div className="mb-5 grid grid-cols-3 gap-1 rounded-lg bg-slate-950 border border-slate-800 p-1 shrink-0">
+          <div className="mb-5 grid grid-cols-2 gap-1 rounded-lg bg-slate-950 border border-slate-800 p-1 shrink-0">
             <button
-              className={modeButtonClass(mode === "manual")}
-              onClick={() => setMode("manual")}
+              className={modeButtonClass(mode === "install")}
+              onClick={() => setMode("install")}
               type="button"
             >
-              手动填写
+              系统安装
             </button>
             <button
               className={modeButtonClass(mode === "link")}
@@ -402,18 +495,11 @@ export function NodesPage() {
             >
               分享链接
             </button>
-            <button
-              className={modeButtonClass(mode === "install")}
-              onClick={() => setMode("install")}
-              type="button"
-            >
-              系统安装
-            </button>
           </div>
         )}
 
         <form className="space-y-4" onSubmit={handleSubmit}>
-          {editingNode || mode === "manual" ? (
+          {editingNode ? (
             <ManualNodeFields
               form={manualForm}
               lockedCore={editingSystemNode}
@@ -463,11 +549,23 @@ export function NodesPage() {
                   ? "保存修改"
                   : mode === "install"
                     ? "发起安装"
-                    : "确认添加"}
+                    : "导入节点"}
             </Button>
           </div>
         </form>
       </Dialog>
+      <ConfirmDialog
+        isOpen={Boolean(confirmAction)}
+        title={confirmAction?.title ?? ""}
+        description={confirmAction?.description ?? ""}
+        confirmLabel={confirmAction?.confirmLabel}
+        isPending={deleteMutation.isPending || uninstallMutation.isPending}
+        onClose={() => setConfirmAction(null)}
+        onConfirm={() => {
+          confirmAction?.onConfirm();
+          setConfirmAction(null);
+        }}
+      />
     </div>
   );
 }
@@ -509,16 +607,21 @@ function StatusDot({
     : isFailed
       ? "border-rose-500/10 bg-rose-500/5 text-rose-400"
       : "border-slate-800 bg-slate-900/60 text-slate-400";
+  const isRunningTask = status === "installing" || status === "uninstalling";
 
   return (
     <Badge className={cn("px-2 py-0.5", borderClass)}>
-      <span
-        className={cn(
-          "mr-1.5 h-1.5 w-1.5 rounded-full shrink-0",
-          dotColor,
-          (isSuccess || isProgress) && "animate-pulse",
-        )}
-      />
+      {isRunningTask ? (
+        <LoaderCircle className="mr-1.5 h-3 w-3 shrink-0 animate-spin text-indigo-400" />
+      ) : (
+        <span
+          className={cn(
+            "mr-1.5 h-1.5 w-1.5 rounded-full shrink-0",
+            dotColor,
+            (isSuccess || isProgress) && "animate-pulse",
+          )}
+        />
+      )}
       <span>{label}</span>
     </Badge>
   );
@@ -534,10 +637,32 @@ function InstallNodeFields({
   setForm: (form: typeof emptyInstallForm) => void;
 }) {
   const normalServers = servers.filter((server) => server.status === "normal");
+  const fieldConfig = getInstallProtocolFieldConfig(form.protocol);
+  const visibleFields = new Set<InstallField>(fieldConfig.fields);
+  const requiredFields = new Set<InstallField>(fieldConfig.requiredFields);
+  const isVisible = (field: InstallField) => visibleFields.has(field);
+  const isRequired = (field: InstallField) => requiredFields.has(field);
+
+  const updateProtocol = (protocol: string) => {
+    const nextConfig = getInstallProtocolFieldConfig(protocol);
+    const nextVisibleFields = new Set<InstallField>(nextConfig.fields);
+    setForm({
+      ...form,
+      protocol,
+      uuid: nextVisibleFields.has("uuid") ? form.uuid : "",
+      realityDomain: nextVisibleFields.has("realityDomain")
+        ? form.realityDomain
+        : "",
+      cdnDomain: nextVisibleFields.has("cdnDomain") ? form.cdnDomain : "",
+      argoDomain: nextVisibleFields.has("argoDomain") ? form.argoDomain : "",
+      argoToken: nextVisibleFields.has("argoToken") ? form.argoToken : "",
+      namePrefix: nextVisibleFields.has("namePrefix") ? form.namePrefix : "",
+    });
+  };
 
   return (
     <>
-      <Field label="目标物理服务器">
+      <Field label="目标物理服务器" required>
         <Select
           value={form.serverId}
           onValueChange={(value) => setForm({ ...form, serverId: value })}
@@ -572,7 +697,7 @@ function InstallNodeFields({
           </p>
         )}
       </Field>
-      <Field label="节点名称">
+      <Field label="节点名称" required>
         <Input
           onChange={(event) => setForm({ ...form, name: event.target.value })}
           placeholder="AnyTLS 自动化部署节点"
@@ -580,18 +705,13 @@ function InstallNodeFields({
           value={form.name}
         />
       </Field>
-      <Field label="底层核心协议">
-        <Select
-          value={form.protocol}
-          onValueChange={(value) => setForm({ ...form, protocol: value })}
-        >
+      <Field label="底层核心协议" required>
+        <Select value={form.protocol} onValueChange={updateProtocol}>
           <SelectTrigger>
             <SelectValue displayValue={form.protocol} />
           </SelectTrigger>
           <SelectContent>
-            {SUPPORTED_PROTOCOLS.filter(
-              (protocol) => !protocol.includes("Argo"),
-            ).map((protocol) => (
+            {SUPPORTED_PROTOCOLS.map((protocol) => (
               <SelectItem key={protocol} value={protocol}>
                 {protocol}
               </SelectItem>
@@ -599,64 +719,138 @@ function InstallNodeFields({
           </SelectContent>
         </Select>
       </Field>
-      <div className="grid gap-3 md:grid-cols-2">
-        <Field label="安装/监听端口">
+      {(isVisible("port") || isVisible("publicPort")) && (
+        <div className="grid gap-3 md:grid-cols-2">
+          {isVisible("port") && (
+            <Field label="安装/监听端口" required={isRequired("port")}>
+              <Input
+                max={65535}
+                min={1}
+                onChange={(event) =>
+                  setForm({ ...form, port: event.target.value })
+                }
+                placeholder="留空则由后端自动生成"
+                required={isRequired("port")}
+                type="number"
+                value={form.port}
+              />
+            </Field>
+          )}
+          {isVisible("publicPort") && (
+            <Field label="对外公网订阅端口" required={isRequired("publicPort")}>
+              <Input
+                max={65535}
+                min={1}
+                onChange={(event) =>
+                  setForm({ ...form, publicPort: event.target.value })
+                }
+                placeholder="留空则复用监听端口"
+                required={isRequired("publicPort")}
+                type="number"
+                value={form.publicPort}
+              />
+            </Field>
+          )}
+        </div>
+      )}
+      {isVisible("uuid") && (
+        <Field
+          label={fieldConfig.uuidLabel ?? "自定义 UUID / 密钥"}
+          required={isRequired("uuid")}
+        >
           <Input
-            max={65535}
-            min={1}
-            onChange={(event) => setForm({ ...form, port: event.target.value })}
-            placeholder="留空则由后端自动生成"
-            type="number"
-            value={form.port}
-          />
-        </Field>
-        <Field label="对外公网订阅端口">
-          <Input
-            max={65535}
-            min={1}
-            onChange={(event) =>
-              setForm({ ...form, publicPort: event.target.value })
+            onChange={(event) => setForm({ ...form, uuid: event.target.value })}
+            placeholder={
+              fieldConfig.uuidPlaceholder ?? "留空则由后端生成强随机 UUID"
             }
-            placeholder="留空则复用监听端口"
-            type="number"
-            value={form.publicPort}
+            required={isRequired("uuid")}
+            value={form.uuid}
           />
         </Field>
-      </div>
-      <Field label="自定义 UUID / 密钥">
-        <Input
-          onChange={(event) => setForm({ ...form, uuid: event.target.value })}
-          placeholder="留空则由后端生成强随机 UUID"
-          value={form.uuid}
-        />
-      </Field>
-      <div className="grid gap-3 md:grid-cols-2">
-        <Field label="Reality 伪装域名">
+      )}
+      {(isVisible("realityDomain") || isVisible("cdnDomain")) && (
+        <div className="grid gap-3 md:grid-cols-2">
+          {isVisible("realityDomain") && (
+            <Field
+              label="Reality 伪装域名"
+              required={isRequired("realityDomain")}
+            >
+              <Input
+                onChange={(event) =>
+                  setForm({ ...form, realityDomain: event.target.value })
+                }
+                placeholder="留空使用脚本默认域名"
+                required={isRequired("realityDomain")}
+                value={form.realityDomain}
+              />
+            </Field>
+          )}
+          {isVisible("cdnDomain") && (
+            <Field label="CDN 优选 Host" required={isRequired("cdnDomain")}>
+              <Input
+                onChange={(event) =>
+                  setForm({ ...form, cdnDomain: event.target.value })
+                }
+                placeholder="可选"
+                required={isRequired("cdnDomain")}
+                value={form.cdnDomain}
+              />
+            </Field>
+          )}
+        </div>
+      )}
+      {(isVisible("argoDomain") || isVisible("argoToken")) && (
+        <div className="grid gap-3 md:grid-cols-2">
+          {isVisible("argoDomain") && (
+            <Field label="Argo 固定域名" required={isRequired("argoDomain")}>
+              <Input
+                onChange={(event) =>
+                  setForm({ ...form, argoDomain: event.target.value })
+                }
+                placeholder="如 tunnel.example.com"
+                required={isRequired("argoDomain")}
+                value={form.argoDomain}
+              />
+            </Field>
+          )}
+          {isVisible("argoToken") && (
+            <Field label="Argo Tunnel Token" required={isRequired("argoToken")}>
+              <Input
+                onChange={(event) =>
+                  setForm({ ...form, argoToken: event.target.value })
+                }
+                placeholder="Cloudflare Tunnel token"
+                required={isRequired("argoToken")}
+                value={form.argoToken}
+              />
+            </Field>
+          )}
+        </div>
+      )}
+      {isVisible("namePrefix") && (
+        <Field label="节点名称前缀" required={isRequired("namePrefix")}>
           <Input
             onChange={(event) =>
-              setForm({ ...form, realityDomain: event.target.value })
+              setForm({ ...form, namePrefix: event.target.value })
             }
-            placeholder="如 gateway.icloud.com"
-            value={form.realityDomain}
+            placeholder="留空则使用节点名称"
+            required={isRequired("namePrefix")}
+            value={form.namePrefix}
           />
         </Field>
-        <Field label="CDN 优选 Host">
+      )}
+      {isVisible("remark") && (
+        <Field label="备注" required={isRequired("remark")}>
           <Input
             onChange={(event) =>
-              setForm({ ...form, cdnDomain: event.target.value })
+              setForm({ ...form, remark: event.target.value })
             }
-            placeholder="可选"
-            value={form.cdnDomain}
+            placeholder="可选备注描述"
+            required={isRequired("remark")}
+            value={form.remark}
           />
         </Field>
-      </div>
-      <Field label="备注">
-        <Input
-          onChange={(event) => setForm({ ...form, remark: event.target.value })}
-          placeholder="可选备注描述"
-          value={form.remark}
-        />
-      </Field>
+      )}
     </>
   );
 }
@@ -672,7 +866,7 @@ function ManualNodeFields({
 }) {
   return (
     <>
-      <Field label="节点名称">
+      <Field label="节点名称" required>
         <Input
           onChange={(event) => setForm({ ...form, name: event.target.value })}
           placeholder="香港 Hysteria2"
@@ -680,7 +874,7 @@ function ManualNodeFields({
           value={form.name}
         />
       </Field>
-      <Field label="传输协议">
+      <Field label="传输协议" required>
         <Select
           value={form.protocol}
           onValueChange={(value) => setForm({ ...form, protocol: value })}
@@ -698,7 +892,7 @@ function ManualNodeFields({
         </Select>
       </Field>
       <div className="grid gap-3 md:grid-cols-[1fr_110px]">
-        <Field label="连接地址/IP">
+        <Field label="连接地址/IP" required>
           <Input
             onChange={(event) =>
               setForm({ ...form, address: event.target.value })
@@ -708,7 +902,7 @@ function ManualNodeFields({
             value={form.address}
           />
         </Field>
-        <Field label="默认端口">
+        <Field label="默认端口" required>
           <Input
             max={65535}
             min={1}
@@ -724,7 +918,7 @@ function ManualNodeFields({
         </Field>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
-        <Field label="底层监听端口">
+        <Field label="底层监听端口" required>
           <Input
             max={65535}
             min={1}
@@ -782,7 +976,10 @@ function LinkNodeFields({
 }) {
   return (
     <>
-      <Field label="节点分享链接 (支持 vless://, vmess://, hysteria2://)">
+      <Field
+        label="节点分享链接 (支持 vless://, vmess://, hysteria2://)"
+        required
+      >
         <textarea
           className="min-h-28 w-full resize-y rounded-lg border border-white/[0.06] bg-slate-950 px-3.5 py-2.5 text-xs text-slate-100 font-mono outline-none transition-all duration-300 focus:border-white/20"
           onChange={(event) =>
@@ -808,44 +1005,38 @@ function LinkNodeFields({
 
 function Field({
   label,
+  required = false,
   children,
 }: {
   label: string;
+  required?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div className="block">
-      <span className="mb-1.5 block text-slate-500 text-[9px] font-bold uppercase tracking-widest">
-        {label}
+      <span className="mb-1.5 flex items-center gap-1.5 text-slate-500 text-[9px] font-bold uppercase tracking-widest">
+        <span>{label}</span>
+        <span
+          className={cn(
+            "rounded border px-1 py-0 text-[9px] leading-4 tracking-normal",
+            required
+              ? "border-rose-500/20 bg-rose-500/10 text-rose-300"
+              : "border-white/[0.06] bg-white/[0.03] text-slate-500",
+          )}
+        >
+          {required ? "必填" : "可选"}
+        </span>
       </span>
       {children}
     </div>
   );
 }
 
-function buildImportPayload(
-  mode: "manual" | "link",
-  manualForm: typeof emptyManualForm,
-  linkForm: typeof emptyLinkForm,
-): NodeImportPayload {
-  if (mode === "link") {
-    return {
-      mode,
-      rawLink: linkForm.rawLink,
-      displayName: linkForm.displayName,
-    };
-  }
-
+function buildImportPayload(linkForm: typeof emptyLinkForm): NodeImportPayload {
   return {
-    mode,
-    name: manualForm.name,
-    protocol: manualForm.protocol,
-    address: manualForm.address,
-    port: Number(manualForm.port),
-    listenPort: Number(manualForm.listenPort),
-    publicPort: manualForm.publicPort ? Number(manualForm.publicPort) : null,
-    remark: manualForm.remark,
-    sensitive: manualForm.sensitive,
+    mode: "link",
+    rawLink: linkForm.rawLink,
+    displayName: linkForm.displayName,
   };
 }
 
