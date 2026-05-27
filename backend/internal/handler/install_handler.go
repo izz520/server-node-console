@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,6 +52,11 @@ type installConfig struct {
 	Port          int    `json:"port"`
 	Remark        string `json:"remark,omitempty"`
 	GeneratedFrom string `json:"generatedFrom"`
+}
+
+type installTarget struct {
+	NodeID uint
+	Req    installNodeRequest
 }
 
 func (h *Handler) InstallNode(c *gin.Context) {
@@ -206,25 +213,21 @@ func (h *Handler) runInstallTask(taskID uint, nodeID uint, serverID uint, req in
 		return
 	}
 
-	command, _, err := argosbx.BuildInstallCommand(argosbx.InstallParams{
-		Protocol:      req.Protocol,
-		Port:          req.Port,
-		UUID:          req.UUID,
-		RealityDomain: req.RealityDomain,
-		CDNDomain:     req.CDNDomain,
-		ArgoMode:      req.ArgoMode,
-		ArgoDomain:    req.ArgoDomain,
-		ArgoToken:     req.ArgoToken,
-		NamePrefix:    req.NamePrefix,
-	})
+	targets, err := h.installTargetsForServer(serverID, nodeID, req)
 	if err != nil {
 		h.failInstallTask(taskID, nodeID, err)
 		return
 	}
-	h.appendTaskLog(taskID, "info", "generated install command: "+maskInstallCommand(command, req))
+	command, err := argosbx.BuildInstallCommandSet(installParamsForTargets(targets))
+	if err != nil {
+		h.failInstallTask(taskID, nodeID, err)
+		return
+	}
+	h.appendTaskLog(taskID, "info", fmt.Sprintf("install will apply %d protocol node(s) on this server", len(targets)))
+	h.appendTaskLog(taskID, "info", "generated install command: "+maskInstallCommandSet(command, targetRequests(targets)))
 
 	output, err := h.runServerCommand(server, command, func(message string) {
-		h.appendTaskLog(taskID, "info", maskInstallCommand(message, req))
+		h.appendTaskLog(taskID, "info", maskInstallCommandSet(message, targetRequests(targets)))
 	})
 	if err != nil {
 		h.failInstallTask(taskID, nodeID, err)
@@ -240,16 +243,164 @@ func (h *Handler) runInstallTask(taskID uint, nodeID uint, serverID uint, req in
 		"status":   domain.TaskStatusSuccess,
 		"ended_at": now,
 	})
-	nodeUpdates := map[string]any{"status": domain.NodeStatusInstallOK}
-	if rawLink := argosbx.ExtractShareLink(output, req.Protocol); rawLink != "" {
-		if encryptedConfig, err := h.encryptInstallConfigWithRawLink(req, rawLink); err == nil {
-			nodeUpdates["encrypted_protocol_json"] = encryptedConfig
-		} else {
-			h.appendTaskLog(taskID, "error", "encrypt extracted share link failed: "+err.Error())
+	h.updateInstalledTargetsFromOutput(taskID, targets, output)
+	h.appendTaskLog(taskID, "info", "install task completed")
+}
+
+func (h *Handler) installTargetsForServer(serverID uint, currentNodeID uint, currentReq installNodeRequest) ([]installTarget, error) {
+	var nodes []domain.ProtocolNode
+	if err := h.db.
+		Where("server_id = ? AND install_method = ? AND status = ? AND id <> ?", serverID, domain.NodeInstallMethodSystem, domain.NodeStatusInstallOK, currentNodeID).
+		Order("created_at ASC").
+		Find(&nodes).Error; err != nil {
+		return nil, err
+	}
+	targets := make([]installTarget, 0, len(nodes)+1)
+	for _, node := range nodes {
+		req, err := h.installRequestFromNode(node)
+		if err != nil {
+			return nil, fmt.Errorf("prepare existing node %s failed: %w", node.Name, err)
+		}
+		targets = append(targets, installTarget{NodeID: node.ID, Req: req})
+	}
+	targets = append(targets, installTarget{NodeID: currentNodeID, Req: currentReq})
+	return targets, nil
+}
+
+func (h *Handler) installRequestFromNode(node domain.ProtocolNode) (installNodeRequest, error) {
+	req := installNodeRequest{
+		Name:       node.Name,
+		Protocol:   node.Protocol,
+		Port:       node.ListenPort,
+		PublicPort: node.PublicPort,
+		NamePrefix: node.Name,
+	}
+	if node.ServerID != nil {
+		req.ServerID = *node.ServerID
+	}
+	if strings.TrimSpace(node.EncryptedProtocolJSON) == "" {
+		if protocolNeedsUUID(node.Protocol) {
+			return installNodeRequest{}, errors.New("encrypted install params are missing")
+		}
+		return req, nil
+	}
+	encryptor, err := security.NewEncryptor(h.encryptionKey)
+	if err != nil {
+		return installNodeRequest{}, err
+	}
+	plain, err := encryptor.Decrypt(node.EncryptedProtocolJSON)
+	if err != nil {
+		return installNodeRequest{}, err
+	}
+	config := encryptedNodeConfig{}
+	if err := json.Unmarshal([]byte(plain), &config); err != nil {
+		return installNodeRequest{}, err
+	}
+	values := map[string]string{}
+	if strings.TrimSpace(config.Sensitive) != "" {
+		_ = json.Unmarshal([]byte(config.Sensitive), &values)
+	}
+	applyInstallSensitiveValues(&req, values)
+	applyInstallRawLinkValues(&req, config.RawLink)
+	if protocolNeedsUUID(req.Protocol) && req.UUID == "" {
+		return installNodeRequest{}, errors.New("uuid/password is missing")
+	}
+	return req, nil
+}
+
+func applyInstallSensitiveValues(req *installNodeRequest, values map[string]string) {
+	if req.UUID == "" {
+		req.UUID = strings.TrimSpace(installFirstNonEmpty(values["uuid"], values["password"]))
+	}
+	req.RealityDomain = installFirstNonEmpty(req.RealityDomain, values["realityDomain"], values["sni"], values["servername"])
+	req.CDNDomain = installFirstNonEmpty(req.CDNDomain, values["cdnDomain"])
+	req.ArgoMode = installFirstNonEmpty(req.ArgoMode, values["argoMode"])
+	req.ArgoDomain = installFirstNonEmpty(req.ArgoDomain, values["argoDomain"])
+	req.ArgoToken = installFirstNonEmpty(req.ArgoToken, values["argoToken"])
+	req.NamePrefix = installFirstNonEmpty(req.NamePrefix, values["namePrefix"])
+}
+
+func applyInstallRawLinkValues(req *installNodeRequest, rawLink string) {
+	rawLink = strings.TrimSpace(rawLink)
+	if rawLink == "" || strings.HasPrefix(rawLink, "vmess://") {
+		return
+	}
+	parsed, err := url.Parse(rawLink)
+	if err != nil {
+		return
+	}
+	if parsed.User != nil {
+		req.UUID = installFirstNonEmpty(parsed.User.Username(), req.UUID)
+	}
+	if port := parsed.Port(); req.Port == 0 && port != "" {
+		if parsedPort, err := strconv.Atoi(port); err == nil {
+			req.Port = parsedPort
 		}
 	}
-	h.db.Model(&domain.ProtocolNode{}).Where("id = ?", nodeID).Updates(nodeUpdates)
-	h.appendTaskLog(taskID, "info", "install task completed")
+	query := parsed.Query()
+	req.RealityDomain = installFirstNonEmpty(req.RealityDomain, query.Get("sni"), query.Get("servername"))
+	req.CDNDomain = installFirstNonEmpty(req.CDNDomain, query.Get("host"))
+}
+
+func installFirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func installParamsForTargets(targets []installTarget) []argosbx.InstallParams {
+	params := make([]argosbx.InstallParams, 0, len(targets))
+	for _, target := range targets {
+		params = append(params, argosbx.InstallParams{
+			Protocol:      target.Req.Protocol,
+			Port:          target.Req.Port,
+			UUID:          target.Req.UUID,
+			RealityDomain: target.Req.RealityDomain,
+			CDNDomain:     target.Req.CDNDomain,
+			ArgoMode:      target.Req.ArgoMode,
+			ArgoDomain:    target.Req.ArgoDomain,
+			ArgoToken:     target.Req.ArgoToken,
+			NamePrefix:    target.Req.NamePrefix,
+		})
+	}
+	return params
+}
+
+func targetRequests(targets []installTarget) []installNodeRequest {
+	requests := make([]installNodeRequest, 0, len(targets))
+	for _, target := range targets {
+		requests = append(requests, target.Req)
+	}
+	return requests
+}
+
+func (h *Handler) updateInstalledTargetsFromOutput(taskID uint, targets []installTarget, output string) {
+	rawLinksByProtocol := map[string][]string{}
+	for _, target := range targets {
+		if _, ok := rawLinksByProtocol[target.Req.Protocol]; !ok {
+			rawLinksByProtocol[target.Req.Protocol] = argosbx.ExtractShareLinks(output, target.Req.Protocol)
+		}
+		rawLinks := rawLinksByProtocol[target.Req.Protocol]
+		rawLink := ""
+		if len(rawLinks) > 0 {
+			rawLink = rawLinks[0]
+			rawLinksByProtocol[target.Req.Protocol] = rawLinks[1:]
+		}
+		nodeUpdates := map[string]any{"status": domain.NodeStatusInstallOK}
+		if rawLink != "" {
+			req := target.Req
+			applyInstallRawLinkValues(&req, rawLink)
+			if encryptedConfig, err := h.encryptInstallConfigWithRawLink(req, rawLink); err == nil {
+				nodeUpdates["encrypted_protocol_json"] = encryptedConfig
+			} else {
+				h.appendTaskLog(taskID, "error", "encrypt extracted share link failed: "+err.Error())
+			}
+		}
+		h.db.Model(&domain.ProtocolNode{}).Where("id = ?", target.NodeID).Updates(nodeUpdates)
+	}
 }
 
 func prepareInstallRequest(req installNodeRequest) (installNodeRequest, error) {
@@ -322,6 +473,21 @@ func (h *Handler) encryptInstallConfigWithRawLink(req installNodeRequest, rawLin
 	if req.ArgoToken != "" {
 		sensitive["argoToken"] = req.ArgoToken
 	}
+	if req.RealityDomain != "" {
+		sensitive["realityDomain"] = req.RealityDomain
+	}
+	if req.CDNDomain != "" {
+		sensitive["cdnDomain"] = req.CDNDomain
+	}
+	if req.ArgoMode != "" {
+		sensitive["argoMode"] = req.ArgoMode
+	}
+	if req.ArgoDomain != "" {
+		sensitive["argoDomain"] = req.ArgoDomain
+	}
+	if req.NamePrefix != "" {
+		sensitive["namePrefix"] = req.NamePrefix
+	}
 	if len(sensitive) == 0 {
 		if rawLink == "" {
 			return "", nil
@@ -376,7 +542,18 @@ func randomSS2022Key() (string, error) {
 }
 
 func maskInstallCommand(command string, req installNodeRequest) string {
-	replacements := []string{req.UUID, req.ArgoToken}
+	return maskInstallCommandSet(command, []installNodeRequest{req})
+}
+
+func maskInstallCommandSet(command string, requests []installNodeRequest) string {
+	replacements := []string{}
+	for _, req := range requests {
+		replacements = append(replacements, req.UUID, req.ArgoToken)
+	}
+	return maskSensitiveValues(command, replacements)
+}
+
+func maskSensitiveValues(command string, replacements []string) string {
 	masked := command
 	for _, value := range replacements {
 		if value == "" {
@@ -403,11 +580,37 @@ func (h *Handler) runUninstallTask(taskID uint, nodeID uint, serverID uint, dele
 		return
 	}
 
-	command := argosbx.BuildUninstallCommand()
-	h.appendTaskLog(taskID, "info", "generated uninstall command: "+command)
-	_, err = h.runServerCommand(server, command, func(message string) {
-		h.appendTaskLog(taskID, "info", message)
-	})
+	remainingTargets, err := h.remainingInstallTargetsForServer(serverID, nodeID)
+	if err != nil {
+		h.failUninstallTask(taskID, nodeID, err)
+		return
+	}
+	if len(remainingTargets) == 0 {
+		command := argosbx.BuildUninstallCommand()
+		h.appendTaskLog(taskID, "info", "generated uninstall command: "+command)
+		_, err = h.runServerCommand(server, command, func(message string) {
+			h.appendTaskLog(taskID, "info", message)
+		})
+	} else {
+		command, buildErr := argosbx.BuildInstallCommandSet(installParamsForTargets(remainingTargets))
+		if buildErr != nil {
+			h.failUninstallTask(taskID, nodeID, buildErr)
+			return
+		}
+		h.appendTaskLog(taskID, "info", fmt.Sprintf("uninstall will re-apply %d remaining protocol node(s) on this server", len(remainingTargets)))
+		h.appendTaskLog(taskID, "info", "generated remaining-node install command: "+maskInstallCommandSet(command, targetRequests(remainingTargets)))
+		var output string
+		output, err = h.runServerCommand(server, command, func(message string) {
+			h.appendTaskLog(taskID, "info", maskInstallCommandSet(message, targetRequests(remainingTargets)))
+		})
+		if err == nil {
+			if detectErr := argosbx.DetectInstallFailure(output); detectErr != nil {
+				err = detectErr
+			} else {
+				h.updateInstalledTargetsFromOutput(taskID, remainingTargets, output)
+			}
+		}
+	}
 	if err != nil {
 		h.failUninstallTask(taskID, nodeID, err)
 		return
@@ -428,6 +631,25 @@ func (h *Handler) runUninstallTask(taskID uint, nodeID uint, serverID uint, dele
 		h.db.Model(&domain.ProtocolNode{}).Where("id = ?", nodeID).Update("status", domain.NodeStatusUninstalled)
 	}
 	h.appendTaskLog(taskID, "info", "uninstall task completed")
+}
+
+func (h *Handler) remainingInstallTargetsForServer(serverID uint, uninstalledNodeID uint) ([]installTarget, error) {
+	var nodes []domain.ProtocolNode
+	if err := h.db.
+		Where("server_id = ? AND install_method = ? AND status = ? AND id <> ?", serverID, domain.NodeInstallMethodSystem, domain.NodeStatusInstallOK, uninstalledNodeID).
+		Order("created_at ASC").
+		Find(&nodes).Error; err != nil {
+		return nil, err
+	}
+	targets := make([]installTarget, 0, len(nodes))
+	for _, node := range nodes {
+		req, err := h.installRequestFromNode(node)
+		if err != nil {
+			return nil, fmt.Errorf("prepare remaining node %s failed: %w", node.Name, err)
+		}
+		targets = append(targets, installTarget{NodeID: node.ID, Req: req})
+	}
+	return targets, nil
 }
 
 func (h *Handler) markTaskRunning(taskID uint) {

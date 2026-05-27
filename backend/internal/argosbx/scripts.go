@@ -40,41 +40,61 @@ type InstallParams struct {
 }
 
 func BuildInstallCommand(params InstallParams) (string, string, error) {
+	command, err := BuildInstallCommandSet([]InstallParams{params})
+	if err != nil {
+		return "", "", err
+	}
 	varName, ok := protocolVariables[params.Protocol]
 	if !ok {
 		return "", "", fmt.Errorf("unsupported protocol: %s", params.Protocol)
 	}
+	return command, varName, nil
+}
 
-	values := map[string]string{
-		varName: "",
+func BuildInstallCommandSet(params []InstallParams) (string, error) {
+	if len(params) == 0 {
+		return "", errors.New("install params are required")
 	}
-	if params.Port > 0 {
-		values[varName] = fmt.Sprintf("%d", params.Port)
-	}
-	if params.UUID != "" {
-		values["uuid"] = params.UUID
-	}
-	if params.RealityDomain != "" {
-		values["reym"] = params.RealityDomain
-	}
-	if params.CDNDomain != "" {
-		values["cdnym"] = params.CDNDomain
-	}
-	if params.NamePrefix != "" {
-		values["name"] = params.NamePrefix
-	}
-	if strings.Contains(params.Protocol, "Argo") || params.ArgoMode != "" {
-		values["argo"] = varName
-	}
-	if params.ArgoDomain != "" {
-		values["agn"] = params.ArgoDomain
-	}
-	if params.ArgoToken != "" {
-		values["agk"] = params.ArgoToken
+	values := map[string]string{}
+	usedVars := map[string]string{}
+	for _, param := range params {
+		varName, ok := protocolVariables[param.Protocol]
+		if !ok {
+			return "", fmt.Errorf("unsupported protocol: %s", param.Protocol)
+		}
+		if usedProtocol, ok := usedVars[varName]; ok {
+			return "", fmt.Errorf("argosbx cannot install multiple %s nodes in one server run; %s and %s both use %s", param.Protocol, usedProtocol, param.Protocol, varName)
+		}
+		usedVars[varName] = param.Protocol
+		values[varName] = ""
+		if param.Port > 0 {
+			values[varName] = fmt.Sprintf("%d", param.Port)
+		}
+		setFirst(values, "uuid", param.UUID)
+		setFirst(values, "reym", param.RealityDomain)
+		setFirst(values, "cdnym", param.CDNDomain)
+		if len(params) == 1 {
+			setFirst(values, "name", param.NamePrefix)
+		}
+		if strings.Contains(param.Protocol, "Argo") || param.ArgoMode != "" {
+			setFirst(values, "argo", varName)
+		}
+		setFirst(values, "agn", param.ArgoDomain)
+		setFirst(values, "agk", param.ArgoToken)
 	}
 
 	prefix := renderVars(values)
-	return remoteShellCommand(strings.TrimSpace(prefix + " " + MainScript + " rep")), varName, nil
+	return remoteShellCommand(strings.TrimSpace(prefix + " " + MainScript + " rep")), nil
+}
+
+func setFirst(values map[string]string, key string, value string) {
+	if value == "" {
+		return
+	}
+	if _, exists := values[key]; exists {
+		return
+	}
+	values[key] = value
 }
 
 func BuildUninstallCommand() string {

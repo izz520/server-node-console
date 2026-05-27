@@ -54,6 +54,31 @@ func TestBuildUninstallCommandWrapsScriptWithRemoteBootstrap(t *testing.T) {
 	}
 }
 
+func TestBuildInstallCommandSetIncludesMultipleProtocolPorts(t *testing.T) {
+	command, err := BuildInstallCommandSet([]InstallParams{
+		{Protocol: "Vless-tcp-reality-vision", Port: 31225, UUID: "uuid-value", RealityDomain: "apple.com"},
+		{Protocol: "AnyTLS", Port: 41416},
+	})
+	if err != nil {
+		t.Fatalf("BuildInstallCommandSet returned error: %v", err)
+	}
+	for _, want := range []string{"vlpt=", "31225", "anpt=", "41416", "uuid=", "reym=", " rep"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("expected command to contain %q, got %q", want, command)
+		}
+	}
+}
+
+func TestBuildInstallCommandSetRejectsDuplicateProtocolVariable(t *testing.T) {
+	_, err := BuildInstallCommandSet([]InstallParams{
+		{Protocol: "AnyTLS", Port: 41416},
+		{Protocol: "AnyTLS", Port: 41417},
+	})
+	if err == nil {
+		t.Fatal("expected duplicate argosbx protocol variable to be rejected")
+	}
+}
+
 func TestShellSingleQuoteEscapesPOSIXSingleQuotes(t *testing.T) {
 	got := shellSingleQuote("AnyTLS O'Neil Node")
 	want := "'AnyTLS O'\\''Neil Node'"

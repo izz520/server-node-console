@@ -705,7 +705,7 @@ function InstallNodeFields({
       <Field label="节点名称" required>
         <Input
           onChange={(event) => setForm({ ...form, name: event.target.value })}
-          placeholder="AnyTLS 自动化部署节点"
+          placeholder="节点名称"
           required
           value={form.name}
         />

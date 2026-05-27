@@ -62,3 +62,16 @@ func TestExtractShareLinkChoosesProtocolScheme(t *testing.T) {
 		t.Fatalf("expected shadowsocks link, got %q", got)
 	}
 }
+
+func TestExtractShareLinksReturnsAllProtocolLinks(t *testing.T) {
+	output := strings.Join([]string{
+		"vless://uuid@example.com:443?security=reality#Reality",
+		"anytls://password@example.com:8443?insecure=0#AnyTLS",
+		"anytls://password2@example.com:9443?insecure=0#AnyTLS2",
+	}, "\n")
+
+	got := ExtractShareLinks(output, "AnyTLS")
+	if len(got) != 2 || !strings.Contains(got[0], ":8443") || !strings.Contains(got[1], ":9443") {
+		t.Fatalf("expected two anytls links, got %#v", got)
+	}
+}

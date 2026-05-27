@@ -34,21 +34,31 @@ func DetectInstallFailure(output string) error {
 }
 
 func ExtractShareLink(output string, protocol string) string {
-	schemes := shareLinkSchemes(protocol)
-	if len(schemes) == 0 {
+	links := ExtractShareLinks(output, protocol)
+	if len(links) == 0 {
 		return ""
 	}
+	return links[0]
+}
+
+func ExtractShareLinks(output string, protocol string) []string {
+	schemes := shareLinkSchemes(protocol)
+	if len(schemes) == 0 {
+		return nil
+	}
+	links := []string{}
 	for _, line := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
 		line = strings.TrimSpace(line)
 		for _, scheme := range schemes {
 			prefix := scheme + "://"
 			index := strings.Index(strings.ToLower(line), prefix)
 			if index >= 0 {
-				return strings.TrimSpace(strings.Trim(line[index:], `"'<>，。；;、`))
+				links = append(links, strings.TrimSpace(strings.Trim(line[index:], `"'<>，。；;、`)))
+				break
 			}
 		}
 	}
-	return ""
+	return links
 }
 
 func shareLinkSchemes(protocol string) []string {
