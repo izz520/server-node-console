@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,10 @@ type installNodeRequest struct {
 	ArgoToken     string `json:"argoToken"`
 	NamePrefix    string `json:"namePrefix"`
 	Remark        string `json:"remark"`
+}
+
+type uninstallNodeRequest struct {
+	DeleteAfterUninstall bool `json:"deleteAfterUninstall"`
 }
 
 type installNodeResponse struct {
@@ -70,7 +75,7 @@ func (h *Handler) InstallNode(c *gin.Context) {
 
 	req, err := prepareInstallRequest(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "prepare install params failed"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	if _, err := argosbx.VarNameForProtocol(req.Protocol); err != nil {
@@ -135,6 +140,10 @@ func (h *Handler) UninstallNode(c *gin.Context) {
 	if !ok {
 		return
 	}
+	var req uninstallNodeRequest
+	if c.Request.Body != nil {
+		_ = c.ShouldBindJSON(&req)
+	}
 	if node.InstallMethod != domain.NodeInstallMethodSystem {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "only system installed nodes can be uninstalled"})
 		return
@@ -172,9 +181,9 @@ func (h *Handler) UninstallNode(c *gin.Context) {
 		return
 	}
 
-	go h.runUninstallTask(task.ID, node.ID, *node.ServerID)
+	go h.runUninstallTask(task.ID, node.ID, *node.ServerID, req.DeleteAfterUninstall)
 
-	h.logOperation(&node.UserID, "node.uninstall.start", "node", map[string]any{"nodeId": node.ID, "taskId": task.ID, "serverId": *node.ServerID})
+	h.logOperation(&node.UserID, "node.uninstall.start", "node", map[string]any{"nodeId": node.ID, "taskId": task.ID, "serverId": *node.ServerID, "deleteAfterUninstall": req.DeleteAfterUninstall})
 	c.JSON(http.StatusAccepted, installNodeResponse{
 		Node: toNodeResponse(node),
 		Task: toTaskResponse(task),
@@ -231,7 +240,15 @@ func (h *Handler) runInstallTask(taskID uint, nodeID uint, serverID uint, req in
 		"status":   domain.TaskStatusSuccess,
 		"ended_at": now,
 	})
-	h.db.Model(&domain.ProtocolNode{}).Where("id = ?", nodeID).Update("status", domain.NodeStatusInstallOK)
+	nodeUpdates := map[string]any{"status": domain.NodeStatusInstallOK}
+	if rawLink := argosbx.ExtractShareLink(output, req.Protocol); rawLink != "" {
+		if encryptedConfig, err := h.encryptInstallConfigWithRawLink(req, rawLink); err == nil {
+			nodeUpdates["encrypted_protocol_json"] = encryptedConfig
+		} else {
+			h.appendTaskLog(taskID, "error", "encrypt extracted share link failed: "+err.Error())
+		}
+	}
+	h.db.Model(&domain.ProtocolNode{}).Where("id = ?", nodeID).Updates(nodeUpdates)
 	h.appendTaskLog(taskID, "info", "install task completed")
 }
 
@@ -257,8 +274,15 @@ func prepareInstallRequest(req installNodeRequest) (installNodeRequest, error) {
 	if req.PublicPort != nil && (*req.PublicPort < 1 || *req.PublicPort > 65535) {
 		return installNodeRequest{}, errors.New("node public port must be between 1 and 65535")
 	}
+	if err := validateInstallRequiredFields(req); err != nil {
+		return installNodeRequest{}, err
+	}
 	if req.UUID == "" && protocolNeedsUUID(req.Protocol) {
-		req.UUID, err = randomUUID()
+		if strings.Contains(strings.ToLower(req.Protocol), "shadowsocks") {
+			req.UUID, err = randomSS2022Key()
+		} else {
+			req.UUID, err = randomUUID()
+		}
 		if err != nil {
 			return installNodeRequest{}, err
 		}
@@ -269,22 +293,49 @@ func prepareInstallRequest(req installNodeRequest) (installNodeRequest, error) {
 	return req, nil
 }
 
+func validateInstallRequiredFields(req installNodeRequest) error {
+	protocol := strings.ReplaceAll(strings.ToLower(req.Protocol), " ", "")
+	if protocol == "argo固定隧道" {
+		if req.ArgoDomain == "" {
+			return errors.New("argo domain is required for fixed argo tunnel")
+		}
+		if req.ArgoToken == "" {
+			return errors.New("argo token is required for fixed argo tunnel")
+		}
+	}
+	return nil
+}
+
 func (h *Handler) encryptInstallConfig(req installNodeRequest) (string, error) {
+	return h.encryptInstallConfigWithRawLink(req, "")
+}
+
+func (h *Handler) encryptInstallConfigWithRawLink(req installNodeRequest, rawLink string) (string, error) {
 	sensitive := map[string]string{}
 	if req.UUID != "" {
 		sensitive["uuid"] = req.UUID
+	}
+	if strings.Contains(strings.ToLower(req.Protocol), "shadowsocks") && req.UUID != "" {
+		sensitive["password"] = req.UUID
+		sensitive["cipher"] = "2022-blake3-aes-128-gcm"
 	}
 	if req.ArgoToken != "" {
 		sensitive["argoToken"] = req.ArgoToken
 	}
 	if len(sensitive) == 0 {
-		return "", nil
+		if rawLink == "" {
+			return "", nil
+		}
+		return h.encryptNodeConfig(encryptedNodeConfig{RawLink: rawLink})
 	}
 	data, err := json.Marshal(sensitive)
 	if err != nil {
 		return "", err
 	}
-	return h.encryptNodeConfig(encryptedNodeConfig{Sensitive: string(data)})
+	return h.encryptNodeConfig(encryptedNodeConfig{
+		Sensitive: string(data),
+		RawLink:   strings.TrimSpace(rawLink),
+	})
 }
 
 func protocolNeedsUUID(protocol string) bool {
@@ -293,6 +344,7 @@ func protocolNeedsUUID(protocol string) bool {
 		strings.Contains(value, "vmess") ||
 		strings.Contains(value, "reality") ||
 		strings.Contains(value, "anytls") ||
+		strings.Contains(value, "shadowsocks") ||
 		strings.Contains(value, "argo")
 }
 
@@ -315,6 +367,14 @@ func randomUUID() (string, error) {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", bytes[0:4], bytes[4:6], bytes[6:8], bytes[8:10], bytes[10:16]), nil
 }
 
+func randomSS2022Key() (string, error) {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(bytes), nil
+}
+
 func maskInstallCommand(command string, req installNodeRequest) string {
 	replacements := []string{req.UUID, req.ArgoToken}
 	masked := command
@@ -327,7 +387,7 @@ func maskInstallCommand(command string, req installNodeRequest) string {
 	return masked
 }
 
-func (h *Handler) runUninstallTask(taskID uint, nodeID uint, serverID uint) {
+func (h *Handler) runUninstallTask(taskID uint, nodeID uint, serverID uint, deleteAfterUninstall bool) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			h.failUninstallTask(taskID, nodeID, fmt.Errorf("uninstall task panic: %v", recovered))
@@ -358,7 +418,15 @@ func (h *Handler) runUninstallTask(taskID uint, nodeID uint, serverID uint) {
 		"status":   domain.TaskStatusSuccess,
 		"ended_at": now,
 	})
-	h.db.Model(&domain.ProtocolNode{}).Where("id = ?", nodeID).Update("status", domain.NodeStatusUninstalled)
+	if deleteAfterUninstall {
+		if err := h.deleteNodeRecord(nodeID); err != nil {
+			h.failUninstallTask(taskID, nodeID, err)
+			return
+		}
+		h.appendTaskLog(taskID, "info", "node record deleted after uninstall")
+	} else {
+		h.db.Model(&domain.ProtocolNode{}).Where("id = ?", nodeID).Update("status", domain.NodeStatusUninstalled)
+	}
 	h.appendTaskLog(taskID, "info", "uninstall task completed")
 }
 

@@ -49,16 +49,32 @@ type subscriptionResponse struct {
 }
 
 type subscriptionNodeView struct {
-	Name       string `json:"name"`
-	Protocol   string `json:"protocol"`
-	Address    string `json:"address"`
-	Port       int    `json:"port"`
-	Remark     string `json:"remark,omitempty"`
-	RawLink    string `json:"rawLink,omitempty"`
-	ConfigJSON string `json:"configJson,omitempty"`
-	UUID       string `json:"uuid,omitempty"`
-	Password   string `json:"password,omitempty"`
+	Name          string `json:"name"`
+	Protocol      string `json:"protocol"`
+	Address       string `json:"address"`
+	Port          int    `json:"port"`
+	Remark        string `json:"remark,omitempty"`
+	RawLink       string `json:"rawLink,omitempty"`
+	ConfigJSON    string `json:"configJson,omitempty"`
+	UUID          string `json:"uuid,omitempty"`
+	Password      string `json:"password,omitempty"`
+	Peer          string `json:"peer,omitempty"`
+	HPKP          string `json:"hpkp,omitempty"`
+	UDP           bool   `json:"udp,omitempty"`
+	Insecure      bool   `json:"insecure,omitempty"`
+	AllowInsecure bool   `json:"allowInsecure,omitempty"`
+	Network       string `json:"network,omitempty"`
+	Security      string `json:"security,omitempty"`
+	Flow          string `json:"flow,omitempty"`
+	Fingerprint   string `json:"fingerprint,omitempty"`
+	ServerName    string `json:"serverName,omitempty"`
+	RealityPBK    string `json:"realityPbk,omitempty"`
+	RealitySID    string `json:"realitySid,omitempty"`
+	SpiderX       string `json:"spiderX,omitempty"`
+	Values        map[string]string
 }
+
+const encryptedRawLinkKey = "__rawLink"
 
 func (h *Handler) ListSubscriptions(c *gin.Context) {
 	userID, ok := currentUserID(c)
@@ -477,17 +493,33 @@ func (h *Handler) subscriptionNodeViews(subscriptionID uint) ([]subscriptionNode
 		if node.PublicPort != nil {
 			port = *node.PublicPort
 		}
-		sensitiveValues := sensitiveByNodeID[node.ID]
+		encryptedValues := sensitiveByNodeID[node.ID]
+		rawLink := firstNonEmpty(config.RawLink, mapValue(encryptedValues, encryptedRawLinkKey))
+		sensitiveValues := mergeStringMaps(parseShareLinkValues(rawLink), encryptedValues)
 		views = append(views, subscriptionNodeView{
-			Name:       node.Name,
-			Protocol:   node.Protocol,
-			Address:    config.Address,
-			Port:       port,
-			Remark:     config.Remark,
-			RawLink:    config.RawLink,
-			ConfigJSON: config.ConfigJSON,
-			UUID:       sensitiveValues["uuid"],
-			Password:   firstNonEmpty(sensitiveValues["password"], sensitiveValues["passwd"], sensitiveValues["pass"], sensitiveValues["uuid"]),
+			Name:          node.Name,
+			Protocol:      node.Protocol,
+			Address:       config.Address,
+			Port:          port,
+			Remark:        config.Remark,
+			RawLink:       rawLink,
+			ConfigJSON:    config.ConfigJSON,
+			UUID:          mapValue(sensitiveValues, "uuid", "id"),
+			Password:      firstNonEmpty(mapValue(sensitiveValues, "password", "passwd", "pass"), mapValue(sensitiveValues, "uuid", "id")),
+			Peer:          mapValue(sensitiveValues, "peer", "sni", "server_name", "servername", "serverName"),
+			HPKP:          mapValue(sensitiveValues, "hpkp", "pin", "certificate_public_key_sha256"),
+			UDP:           truthyValue(mapValue(sensitiveValues, "udp")),
+			Insecure:      truthyValue(mapValue(sensitiveValues, "insecure", "skip-cert-verify", "skip_cert_verify", "allowInsecure", "allow_insecure")),
+			AllowInsecure: truthyValue(mapValue(sensitiveValues, "allowInsecure", "allow_insecure")),
+			Network:       mapValue(sensitiveValues, "network", "type"),
+			Security:      mapValue(sensitiveValues, "security"),
+			Flow:          mapValue(sensitiveValues, "flow"),
+			Fingerprint:   mapValue(sensitiveValues, "fp", "fingerprint", "client-fingerprint", "client_fingerprint"),
+			ServerName:    mapValue(sensitiveValues, "sni", "servername", "server_name", "serverName", "host"),
+			RealityPBK:    mapValue(sensitiveValues, "pbk", "public-key", "public_key"),
+			RealitySID:    mapValue(sensitiveValues, "sid", "short-id", "short_id"),
+			SpiderX:       mapValue(sensitiveValues, "spx", "spider-x", "spider_x"),
+			Values:        sensitiveValues,
 		})
 	}
 	return views, nil
@@ -516,10 +548,16 @@ func (h *Handler) subscriptionNodeSensitiveValues(nodes []domain.ProtocolNode) (
 		if err := json.Unmarshal([]byte(plain), &encryptedConfig); err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(encryptedConfig.Sensitive) == "" {
-			continue
+		values := map[string]string{}
+		if strings.TrimSpace(encryptedConfig.Sensitive) != "" {
+			values = parseSensitiveValues(encryptedConfig.Sensitive)
 		}
-		out[node.ID] = parseSensitiveValues(encryptedConfig.Sensitive)
+		if rawLink := strings.TrimSpace(encryptedConfig.RawLink); rawLink != "" {
+			values[encryptedRawLinkKey] = rawLink
+		}
+		if len(values) > 0 {
+			out[node.ID] = values
+		}
 	}
 
 	return out, nil
@@ -548,6 +586,149 @@ func parseSensitiveValues(value string) map[string]string {
 		values[key] = raw
 	}
 	return values
+}
+
+func parseShareLinkValues(rawLink string) map[string]string {
+	values := map[string]string{}
+	rawLink = strings.TrimSpace(rawLink)
+	if rawLink == "" {
+		return values
+	}
+	if strings.HasPrefix(rawLink, "vmess://") {
+		encoded := strings.TrimPrefix(rawLink, "vmess://")
+		decoded, err := base64.RawStdEncoding.DecodeString(encoded)
+		if err != nil {
+			decoded, err = base64.StdEncoding.DecodeString(encoded)
+		}
+		if err != nil {
+			return values
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(decoded, &payload); err != nil {
+			return values
+		}
+		copyAnyString(values, payload, "uuid", "id")
+		copyAnyString(values, payload, "alterId", "aid")
+		copyAnyString(values, payload, "cipher", "scy")
+		copyAnyString(values, payload, "network", "net")
+		copyAnyString(values, payload, "tls", "tls")
+		copyAnyString(values, payload, "servername", "sni")
+		copyAnyString(values, payload, "host", "host")
+		copyAnyString(values, payload, "path", "path")
+		return values
+	}
+	if strings.HasPrefix(strings.ToLower(rawLink), "ss://") {
+		withoutScheme := strings.TrimPrefix(rawLink, "ss://")
+		mainPart := withoutScheme
+		if index := strings.IndexAny(mainPart, "?#"); index >= 0 {
+			mainPart = mainPart[:index]
+		}
+		if !strings.Contains(mainPart, "@") {
+			if decoded := decodeBase64String(mainPart); decoded != "" {
+				cipherPassword, _, _ := strings.Cut(decoded, "@")
+				cipher, pass, ok := strings.Cut(cipherPassword, ":")
+				if ok {
+					values["cipher"] = cipher
+					values["password"] = pass
+				}
+			}
+		}
+	}
+
+	parsed, err := url.Parse(rawLink)
+	if err != nil {
+		return values
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if parsed.User != nil {
+		username := strings.TrimSpace(parsed.User.Username())
+		password, hasPassword := parsed.User.Password()
+		password = strings.TrimSpace(password)
+		switch scheme {
+		case "ss":
+			if hasPassword {
+				values["cipher"] = username
+				values["password"] = password
+			} else if decoded := decodeBase64String(username); decoded != "" {
+				cipher, pass, ok := strings.Cut(decoded, ":")
+				if ok {
+					values["cipher"] = cipher
+					values["password"] = pass
+				}
+			}
+		case "vless", "vmess":
+			values["uuid"] = username
+		case "trojan", "anytls", "hysteria", "hysteria2", "hy2":
+			values["password"] = username
+			if scheme == "anytls" {
+				values["uuid"] = username
+			}
+		case "tuic":
+			if hasPassword {
+				values["uuid"] = username
+				values["password"] = password
+			} else {
+				values["token"] = username
+			}
+		}
+	}
+	for key, items := range parsed.Query() {
+		if len(items) == 0 {
+			continue
+		}
+		if value := strings.TrimSpace(items[0]); value != "" {
+			values[key] = value
+		}
+	}
+	return values
+}
+
+func copyAnyString(out map[string]string, payload map[string]any, target string, source string) {
+	value, ok := payload[source]
+	if !ok {
+		return
+	}
+	switch typed := value.(type) {
+	case string:
+		if strings.TrimSpace(typed) != "" {
+			out[target] = strings.TrimSpace(typed)
+		}
+	case float64:
+		out[target] = strconv.Itoa(int(typed))
+	case bool:
+		out[target] = strconv.FormatBool(typed)
+	}
+}
+
+func decodeBase64String(value string) string {
+	if decoded, err := base64.RawURLEncoding.DecodeString(value); err == nil {
+		return string(decoded)
+	}
+	if decoded, err := base64.URLEncoding.DecodeString(value); err == nil {
+		return string(decoded)
+	}
+	if decoded, err := base64.RawStdEncoding.DecodeString(value); err == nil {
+		return string(decoded)
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(value); err == nil {
+		return string(decoded)
+	}
+	return ""
+}
+
+func mergeStringMaps(base map[string]string, overrides map[string]string) map[string]string {
+	out := make(map[string]string, len(base)+len(overrides))
+	for key, value := range base {
+		if strings.TrimSpace(value) != "" {
+			out[key] = value
+		}
+	}
+	for key, value := range overrides {
+		if strings.TrimSpace(value) != "" {
+			out[key] = value
+		}
+	}
+	return out
 }
 
 func replaceSubscriptionNodes(tx *gorm.DB, subscriptionID uint, nodeIDs []uint) error {
@@ -872,22 +1053,249 @@ func (node subscriptionNodeView) clashProxyLines() []string {
 		fmt.Sprintf("    port: %d", node.Port),
 	}
 	switch normalizedProtocol(node.Protocol) {
+	case "shadowsocks":
+		lines = appendClashField(lines, "cipher", mapValue(node.Values, "cipher", "method", "encryption"))
+		lines = appendClashField(lines, "password", node.Password)
+		lines = appendClashBoolField(lines, "udp", mapValue(node.Values, "udp"))
+		lines = appendClashField(lines, "udp-over-tcp", mapValue(node.Values, "udp-over-tcp", "uot"))
+		lines = appendClashField(lines, "udp-over-tcp-version", mapValue(node.Values, "udp-over-tcp-version", "uot-version"))
+		lines = appendClashField(lines, "ip-version", mapValue(node.Values, "ip-version"))
+		lines = appendClashField(lines, "plugin", mapValue(node.Values, "plugin"))
+		lines = appendPluginOpts(lines, node.Values)
 	case "anytls":
 		if strings.TrimSpace(node.Password) != "" {
 			lines = append(lines, "    password: "+yamlQuote(strings.TrimSpace(node.Password)))
 		}
-		lines = append(lines, "    skip-cert-verify: true")
-	case "hysteria2", "tuic":
-		if strings.TrimSpace(node.Password) != "" {
-			lines = append(lines, "    password: "+yamlQuote(strings.TrimSpace(node.Password)))
+		lines = appendClashField(lines, "client-fingerprint", node.Fingerprint)
+		lines = appendClashBoolField(lines, "udp", mapValue(node.Values, "udp"))
+		lines = appendClashField(lines, "idle-session-check-interval", mapValue(node.Values, "idle-session-check-interval"))
+		lines = appendClashField(lines, "idle-session-timeout", mapValue(node.Values, "idle-session-timeout"))
+		lines = appendClashField(lines, "min-idle-session", mapValue(node.Values, "min-idle-session"))
+		lines = appendClashField(lines, "sni", firstNonEmpty(node.Peer, node.ServerName))
+		lines = appendClashALPN(lines, mapValue(node.Values, "alpn"))
+		lines = appendClashBool(lines, "skip-cert-verify", node.Insecure || node.AllowInsecure)
+	case "trojan":
+		lines = appendClashField(lines, "password", node.Password)
+		lines = appendClashBoolField(lines, "udp", mapValue(node.Values, "udp"))
+		lines = appendTLSFields(lines, node, "sni")
+		lines = appendClashField(lines, "network", node.Network)
+		lines = appendRealityOpts(lines, node)
+		lines = appendClashBool(lines, "skip-cert-verify", node.Insecure || node.AllowInsecure)
+	case "hysteria2":
+		lines = appendClashField(lines, "ports", mapValue(node.Values, "ports"))
+		lines = appendClashField(lines, "hop-interval", mapValue(node.Values, "hop-interval", "hop_interval"))
+		lines = appendClashField(lines, "password", node.Password)
+		lines = appendClashField(lines, "up", mapValue(node.Values, "up", "upmbps"))
+		lines = appendClashField(lines, "down", mapValue(node.Values, "down", "downmbps"))
+		lines = appendClashField(lines, "obfs", mapValue(node.Values, "obfs"))
+		lines = appendClashField(lines, "obfs-password", mapValue(node.Values, "obfs-password", "obfs_password"))
+		lines = appendTLSFields(lines, node, "sni")
+		lines = appendClashBool(lines, "skip-cert-verify", node.Insecure || node.AllowInsecure)
+	case "tuic":
+		lines = appendClashField(lines, "token", mapValue(node.Values, "token"))
+		lines = appendClashField(lines, "uuid", node.UUID)
+		lines = appendClashField(lines, "password", node.Password)
+		lines = appendClashField(lines, "ip", mapValue(node.Values, "ip"))
+		lines = appendClashField(lines, "heartbeat-interval", mapValue(node.Values, "heartbeat-interval"))
+		lines = appendClashALPN(lines, mapValue(node.Values, "alpn"))
+		lines = appendClashBoolField(lines, "disable-sni", mapValue(node.Values, "disable-sni"))
+		lines = appendClashBoolField(lines, "reduce-rtt", mapValue(node.Values, "reduce-rtt"))
+		lines = appendClashField(lines, "request-timeout", mapValue(node.Values, "request-timeout"))
+		lines = appendClashField(lines, "udp-relay-mode", mapValue(node.Values, "udp-relay-mode"))
+		lines = appendClashField(lines, "congestion-controller", mapValue(node.Values, "congestion-controller"))
+		lines = appendClashField(lines, "bbr-profile", mapValue(node.Values, "bbr-profile"))
+		lines = appendClashField(lines, "max-udp-relay-packet-size", mapValue(node.Values, "max-udp-relay-packet-size"))
+		lines = appendClashBoolField(lines, "fast-open", mapValue(node.Values, "fast-open"))
+		lines = appendClashField(lines, "max-open-streams", mapValue(node.Values, "max-open-streams"))
+		lines = appendClashField(lines, "sni", node.ServerName)
+		lines = appendClashBool(lines, "skip-cert-verify", node.Insecure || node.AllowInsecure)
+	case "hysteria":
+		lines = appendClashField(lines, "auth-str", firstNonEmpty(mapValue(node.Values, "auth-str", "auth_str", "auth"), node.Password))
+		lines = appendClashField(lines, "ports", mapValue(node.Values, "ports"))
+		lines = appendClashField(lines, "obfs", mapValue(node.Values, "obfs"))
+		lines = appendClashField(lines, "protocol", mapValue(node.Values, "protocol"))
+		lines = appendClashField(lines, "up", mapValue(node.Values, "up", "upmbps"))
+		lines = appendClashField(lines, "down", mapValue(node.Values, "down", "downmbps"))
+		lines = appendTLSFields(lines, node, "sni")
+		lines = appendClashField(lines, "recv-window-conn", mapValue(node.Values, "recv-window-conn"))
+		lines = appendClashField(lines, "recv-window", mapValue(node.Values, "recv-window"))
+		lines = appendClashBoolField(lines, "disable_mtu_discovery", mapValue(node.Values, "disable_mtu_discovery"))
+		lines = appendClashBoolField(lines, "fast-open", mapValue(node.Values, "fast-open"))
+		lines = appendClashBool(lines, "skip-cert-verify", node.Insecure || node.AllowInsecure)
+	case "socks":
+		if username := mapValue(node.Values, "username", "user"); username != "" {
+			lines = appendClashField(lines, "username", username)
 		}
-		lines = append(lines, "    skip-cert-verify: true")
+		lines = appendClashField(lines, "password", node.Password)
+		lines = appendClashBoolField(lines, "tls", mapValue(node.Values, "tls"))
+		lines = appendClashBoolField(lines, "udp", mapValue(node.Values, "udp"))
 	case "vless", "vmess":
-		if strings.TrimSpace(node.UUID) != "" {
-			lines = append(lines, "    uuid: "+yamlQuote(strings.TrimSpace(node.UUID)))
+		lines = appendClashField(lines, "uuid", node.UUID)
+		if normalizedProtocol(node.Protocol) == "vmess" {
+			lines = appendClashField(lines, "alterId", firstNonEmpty(mapValue(node.Values, "alterId", "alterid", "aid"), "0"))
+			lines = appendClashField(lines, "cipher", firstNonEmpty(mapValue(node.Values, "cipher", "scy"), "auto"))
 		}
-		lines = append(lines, "    tls: true", "    skip-cert-verify: true")
+		lines = appendClashField(lines, "flow", node.Flow)
+		lines = appendClashField(lines, "packet-encoding", mapValue(node.Values, "packet-encoding", "packet_encoding"))
+		lines = appendClashField(lines, "encryption", mapValue(node.Values, "encryption"))
+		lines = appendClashBoolField(lines, "udp", mapValue(node.Values, "udp"))
+		if truthyValue(mapValue(node.Values, "tls")) || strings.EqualFold(node.Security, "tls") || strings.EqualFold(node.Security, "reality") {
+			lines = append(lines, "    tls: true")
+		}
+		lines = appendTLSFields(lines, node, "servername")
+		lines = appendClashField(lines, "network", node.Network)
+		lines = appendRealityOpts(lines, node)
+		lines = appendTransportOpts(lines, node.Values)
+		if mapValue(node.Values, "global-padding") != "" {
+			lines = appendClashBoolField(lines, "global-padding", mapValue(node.Values, "global-padding"))
+		}
+		if mapValue(node.Values, "authenticated-length") != "" {
+			lines = appendClashBoolField(lines, "authenticated-length", mapValue(node.Values, "authenticated-length"))
+		}
+		lines = appendClashBoolField(lines, "tfo", firstNonEmpty(mapValue(node.Values, "tfo"), "false"))
+		lines = append(lines, fmt.Sprintf("    skip-cert-verify: %t", node.Insecure || node.AllowInsecure))
 	}
+	lines = appendCommonClashFields(lines, node.Values)
+	return lines
+}
+
+func appendClashField(lines []string, key string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return lines
+	}
+	return append(lines, "    "+key+": "+yamlScalar(value))
+}
+
+func appendClashBool(lines []string, key string, value bool) []string {
+	return append(lines, fmt.Sprintf("    %s: %t", key, value))
+}
+
+func appendClashBoolField(lines []string, key string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return lines
+	}
+	return append(lines, fmt.Sprintf("    %s: %t", key, truthyValue(value)))
+}
+
+func appendClashALPN(lines []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return lines
+	}
+	items := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '|'
+	})
+	lines = append(lines, "    alpn:")
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			lines = append(lines, "      - "+yamlQuote(item))
+		}
+	}
+	return lines
+}
+
+func appendTLSFields(lines []string, node subscriptionNodeView, serverNameKey string) []string {
+	if serverName := strings.TrimSpace(node.ServerName); serverName != "" {
+		lines = appendClashField(lines, serverNameKey, serverName)
+	}
+	lines = appendClashField(lines, "fingerprint", mapValue(node.Values, "fingerprint"))
+	lines = appendClashField(lines, "client-fingerprint", node.Fingerprint)
+	lines = appendClashALPN(lines, mapValue(node.Values, "alpn"))
+	return lines
+}
+
+func appendRealityOpts(lines []string, node subscriptionNodeView) []string {
+	if !strings.EqualFold(strings.TrimSpace(node.Security), "reality") && strings.TrimSpace(node.RealityPBK) == "" && strings.TrimSpace(node.RealitySID) == "" {
+		return lines
+	}
+	lines = append(lines, "    reality-opts:")
+	if publicKey := strings.TrimSpace(node.RealityPBK); publicKey != "" {
+		lines = append(lines, "      public-key: "+yamlQuote(publicKey))
+	}
+	if shortID := strings.TrimSpace(node.RealitySID); shortID != "" {
+		lines = append(lines, "      short-id: "+yamlQuote(shortID))
+	}
+	if support := mapValue(node.Values, "support-x25519mlkem768"); support != "" {
+		lines = append(lines, fmt.Sprintf("      support-x25519mlkem768: %t", truthyValue(support)))
+	}
+	return lines
+}
+
+func appendTransportOpts(lines []string, values map[string]string) []string {
+	switch strings.ToLower(strings.TrimSpace(mapValue(values, "network", "type"))) {
+	case "ws":
+		if path := mapValue(values, "path", "ws-path"); path != "" || mapValue(values, "host") != "" {
+			lines = append(lines, "    ws-opts:")
+			if path != "" {
+				lines = append(lines, "      path: "+yamlQuote(path))
+			}
+			if host := mapValue(values, "host"); host != "" {
+				lines = append(lines, "      headers:")
+				lines = append(lines, "        Host: "+yamlQuote(host))
+			}
+		}
+	case "grpc":
+		if serviceName := mapValue(values, "serviceName", "service-name", "grpc-service-name"); serviceName != "" {
+			lines = append(lines, "    grpc-opts:")
+			lines = append(lines, "      grpc-service-name: "+yamlQuote(serviceName))
+		}
+	case "http", "h2":
+		if host := mapValue(values, "host"); host != "" || mapValue(values, "path") != "" {
+			lines = append(lines, "    h2-opts:")
+			if host != "" {
+				lines = append(lines, "      host:")
+				for _, item := range strings.Split(host, ",") {
+					if item = strings.TrimSpace(item); item != "" {
+						lines = append(lines, "        - "+yamlQuote(item))
+					}
+				}
+			}
+			if path := mapValue(values, "path"); path != "" {
+				lines = append(lines, "      path: "+yamlQuote(path))
+			}
+		}
+	case "xhttp":
+		if path := mapValue(values, "path"); path != "" || mapValue(values, "host") != "" || mapValue(values, "mode") != "" {
+			lines = append(lines, "    xhttp-opts:")
+			if path := mapValue(values, "path"); path != "" {
+				lines = append(lines, "      path: "+yamlQuote(path))
+			}
+			if host := mapValue(values, "host"); host != "" {
+				lines = append(lines, "      host: "+yamlQuote(host))
+			}
+			if mode := mapValue(values, "mode"); mode != "" {
+				lines = append(lines, "      mode: "+yamlQuote(mode))
+			}
+		}
+	}
+	return lines
+}
+
+func appendPluginOpts(lines []string, values map[string]string) []string {
+	mode := mapValue(values, "mode", "obfs")
+	host := mapValue(values, "host", "obfs-host", "obfs_param")
+	if mode == "" && host == "" {
+		return lines
+	}
+	lines = append(lines, "    plugin-opts:")
+	if mode != "" {
+		lines = append(lines, "      mode: "+yamlQuote(mode))
+	}
+	if host != "" {
+		lines = append(lines, "      host: "+yamlQuote(host))
+	}
+	return lines
+}
+
+func appendCommonClashFields(lines []string, values map[string]string) []string {
+	lines = appendClashField(lines, "ip-version", mapValue(values, "ip-version"))
+	lines = appendClashField(lines, "interface-name", mapValue(values, "interface-name"))
+	lines = appendClashField(lines, "routing-mark", mapValue(values, "routing-mark"))
+	lines = appendClashBoolField(lines, "mptcp", mapValue(values, "mptcp"))
+	lines = appendClashField(lines, "dialer-proxy", mapValue(values, "dialer-proxy"))
 	return lines
 }
 
@@ -915,9 +1323,32 @@ func (node subscriptionNodeView) shareLine() string {
 		return strings.TrimSpace(node.RawLink)
 	}
 	if normalizedProtocol(node.Protocol) == "anytls" && strings.TrimSpace(node.UUID) != "" {
-		return fmt.Sprintf("%s://%s@%s:%d?insecure=1&allowInsecure=1#%s", node.shareScheme(), url.QueryEscape(strings.TrimSpace(node.UUID)), node.Address, node.Port, urlQueryEscape(node.Name))
+		return fmt.Sprintf("%s://%s@%s:%d%s#%s", node.shareScheme(), url.QueryEscape(strings.TrimSpace(node.UUID)), node.Address, node.Port, node.anyTLSQuery(), urlQueryEscape(node.Name))
 	}
 	return fmt.Sprintf("%s://%s:%d#%s", node.shareScheme(), node.Address, node.Port, urlQueryEscape(node.Name))
+}
+
+func (node subscriptionNodeView) anyTLSQuery() string {
+	params := make([]string, 0, 5)
+	if peer := strings.TrimSpace(node.Peer); peer != "" {
+		params = append(params, "peer="+anyTLSParamEscape(peer))
+	}
+	if node.UDP {
+		params = append(params, "udp=1")
+	}
+	if hpkp := strings.TrimSpace(node.HPKP); hpkp != "" {
+		params = append(params, "hpkp="+anyTLSParamEscape(hpkp))
+	}
+	if node.Insecure || (len(params) == 0 && !node.AllowInsecure) {
+		params = append(params, "insecure=1")
+	}
+	if node.AllowInsecure || (len(params) == 1 && params[0] == "insecure=1") {
+		params = append(params, "allowInsecure=1")
+	}
+	if len(params) == 0 {
+		return ""
+	}
+	return "?" + strings.Join(params, "&")
 }
 
 func (node subscriptionNodeView) singBoxType() string {
@@ -926,6 +1357,8 @@ func (node subscriptionNodeView) singBoxType() string {
 		return "shadowsocks"
 	case "hysteria2":
 		return "hysteria2"
+	case "hysteria":
+		return "hysteria"
 	case "tuic":
 		return "tuic"
 	case "socks":
@@ -980,6 +1413,8 @@ func normalizedProtocol(protocol string) string {
 		return "shadowsocks"
 	case strings.HasPrefix(value, "hysteria2") || value == "hy2":
 		return "hysteria2"
+	case strings.HasPrefix(value, "hysteria"):
+		return "hysteria"
 	case strings.HasPrefix(value, "tuic"):
 		return "tuic"
 	case strings.HasPrefix(value, "socks"):
@@ -999,12 +1434,40 @@ func urlQueryEscape(value string) string {
 	return strings.ReplaceAll(url.QueryEscape(value), "+", "%20")
 }
 
+func anyTLSParamEscape(value string) string {
+	return strings.ReplaceAll(urlQueryEscape(value), "%3A", ":")
+}
+
 func yamlQuote(value string) string {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return `""`
 	}
 	return string(data)
+}
+
+func yamlScalar(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return `""`
+	}
+	if truthyValue(value) || strings.EqualFold(value, "false") || looksNumeric(value) {
+		return value
+	}
+	return yamlQuote(value)
+}
+
+func looksNumeric(value string) bool {
+	if value == "" {
+		return false
+	}
+	if _, err := strconv.Atoi(value); err == nil {
+		return true
+	}
+	if _, err := strconv.ParseFloat(value, 64); err == nil {
+		return true
+	}
+	return false
 }
 
 func firstNonEmpty(values ...string) string {
@@ -1014,4 +1477,24 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func mapValue(values map[string]string, keys ...string) string {
+	for _, key := range keys {
+		for _, candidate := range []string{key, strings.ToLower(key), strings.ReplaceAll(key, "_", "-"), strings.ReplaceAll(key, "-", "_")} {
+			if value := strings.TrimSpace(values[candidate]); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func truthyValue(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }

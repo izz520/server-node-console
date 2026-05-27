@@ -93,6 +93,26 @@ func TestImportNodeFromShareLink(t *testing.T) {
 	}
 }
 
+func TestImportAnyTLSNodeFromShareLink(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "node-anytls-link-user", "node-anytls-link-user@example.com")
+
+	rawLink := "anytls://1c71087d-6bee-4ce7-b619-4c8502db8b95@172.81.102.137:21619?peer=addons.mozilla.org&udp=1&hpkp=5E:4B:8A:96:13:C1:97:45:CF:E7:39:90:3B:06:A3:3A:AE:95:5E:EA:0B:71:6A:69:56:B8:D1:DF:DF:88:D7:09#%F0%9F%87%AF%F0%9F%87%B5%20Shlii-%E5%85%AD%E4%B8%80-JP"
+	body := `{"mode":"link","rawLink":"` + rawLink + `"}`
+	res := performRequest(app, http.MethodPost, "/api/v1/nodes/import", body, token)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected anytls import status 201, got %d: %s", res.Code, res.Body.String())
+	}
+
+	var node nodeResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &node); err != nil {
+		t.Fatalf("decode anytls node response: %v", err)
+	}
+	if node.Protocol != "AnyTLS" || node.Address != "172.81.102.137" || node.Port != 21619 || !node.HasSensitive {
+		t.Fatalf("unexpected anytls node: %+v", node)
+	}
+}
+
 func TestImportVMessNodeFromShareLink(t *testing.T) {
 	app := testRouter(t)
 	token := registerTestUser(t, app, "node-vmess-user", "node-vmess-user@example.com")
@@ -175,6 +195,32 @@ func TestDeleteNodeRejectsInstalledSystemNode(t *testing.T) {
 	deleteRes := performRequest(app, http.MethodDelete, "/api/v1/nodes/"+strconvUint(node.ID), "", token)
 	if deleteRes.Code != http.StatusBadRequest {
 		t.Fatalf("expected delete installed system node status 400, got %d: %s", deleteRes.Code, deleteRes.Body.String())
+	}
+}
+
+func TestDeleteNodeAllowsFailedSystemNode(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "node-system-failed-delete", "node-system-failed-delete@example.com")
+	server := createTestServer(t, app, token, "Failed System Node Server")
+	db := extractDB(t, app)
+
+	node := domain.ProtocolNode{
+		UserID:                 server.UserID,
+		ServerID:               &server.ID,
+		Name:                   "Failed System Node",
+		Protocol:               "Vless-tcp-reality-vision",
+		ListenPort:             49594,
+		SubscriptionConfigJSON: `{"address":"127.0.0.1","port":49594}`,
+		InstallMethod:          domain.NodeInstallMethodSystem,
+		Status:                 domain.NodeStatusInstallFailed,
+	}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatalf("create failed system node: %v", err)
+	}
+
+	deleteRes := performRequest(app, http.MethodDelete, "/api/v1/nodes/"+strconvUint(node.ID), "", token)
+	if deleteRes.Code != http.StatusNoContent {
+		t.Fatalf("expected delete failed system node status 204, got %d: %s", deleteRes.Code, deleteRes.Body.String())
 	}
 }
 

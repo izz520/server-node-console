@@ -258,6 +258,57 @@ func TestSubscriptionRenderingAnyTLSIncludesUUID(t *testing.T) {
 	}
 }
 
+func TestSubscriptionRenderingAnyTLSIncludesExtendedParams(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "sub-anytls-extended", "sub-anytls-extended@example.com")
+	db := extractDB(t, nil)
+	uuid := "1c71087d-6bee-4ce7-b619-4c8502db8b95"
+	hpkp := "5E:4B:8A:96:13:C1:97:45:CF:E7:39:90:3B:06:A3:3A:AE:95:5E:EA:0B:71:6A:69:56:B8:D1:DF:DF:88:D7:09"
+
+	encryptor, err := security.NewEncryptor("test-encryption-key")
+	if err != nil {
+		t.Fatalf("create encryptor: %v", err)
+	}
+	encrypted, err := encryptor.Encrypt(`{"sensitive":"{\"uuid\":\"` + uuid + `\",\"peer\":\"addons.mozilla.org\",\"udp\":\"1\",\"hpkp\":\"` + hpkp + `\"}"}`)
+	if err != nil {
+		t.Fatalf("encrypt node config: %v", err)
+	}
+
+	node := domain.ProtocolNode{
+		UserID:                 1,
+		Name:                   "🇯🇵 Shlii-六一-JP",
+		Protocol:               "AnyTLS",
+		ListenPort:             21619,
+		EncryptedProtocolJSON:  encrypted,
+		SubscriptionConfigJSON: `{"address":"172.81.102.137","port":21619}`,
+		InstallMethod:          domain.NodeInstallMethodSystem,
+		Status:                 domain.NodeStatusInstallOK,
+	}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatalf("create anytls node: %v", err)
+	}
+
+	createBody := `{"name":"AnyTLS Extended Subscription","format":"shadowrocket","enabled":true,"nodeIds":[` + strconvUint(node.ID) + `]}`
+	createRes := performRequest(app, http.MethodPost, "/api/v1/subscriptions", createBody, token)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createRes.Code, createRes.Body.String())
+	}
+	var subscription subscriptionResponse
+	if err := json.Unmarshal(createRes.Body.Bytes(), &subscription); err != nil {
+		t.Fatalf("decode subscription response: %v", err)
+	}
+
+	publicRes := performRequest(app, http.MethodGet, subscription.SubscriptionURL, "", "")
+	if publicRes.Code != http.StatusOK {
+		t.Fatalf("expected public status 200, got %d: %s", publicRes.Code, publicRes.Body.String())
+	}
+
+	want := "anytls://" + uuid + "@172.81.102.137:21619?peer=addons.mozilla.org&udp=1&hpkp=" + hpkp + "#%F0%9F%87%AF%F0%9F%87%B5%20Shlii-%E5%85%AD%E4%B8%80-JP"
+	if publicRes.Body.String() != want {
+		t.Fatalf("expected anytls link %q, got %q", want, publicRes.Body.String())
+	}
+}
+
 func TestSubscriptionRenderingClashAnyTLSIncludesPassword(t *testing.T) {
 	app := testRouter(t)
 	token := registerTestUser(t, app, "sub-clash-anytls", "sub-clash-anytls@example.com")
@@ -307,6 +358,208 @@ func TestSubscriptionRenderingClashAnyTLSIncludesPassword(t *testing.T) {
 		!strings.Contains(body, "proxy-groups:") ||
 		!strings.Contains(body, "rules:") {
 		t.Fatalf("unexpected clash anytls content: %s", body)
+	}
+}
+
+func TestSubscriptionRenderingClashVLESSRealityVisionFromShareLink(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "sub-clash-vless-reality", "sub-clash-vless-reality@example.com")
+
+	rawLink := "vless://8660626b-d84f-4649-b206-7c065b61cf08@wj.tikle.vip:13348?type=tcp&encryption=none&security=reality&pbk=A5pF3kaVzVH2PR0Dhq2M1G28HyeHsQqus3gfHeavFyw&fp=chrome&sni=tesla.com&sid=ce4f61&spx=%2F&flow=xtls-rprx-vision#%F0%9F%87%BA%F0%9F%87%B8%20BWG-MegaBox-Pro"
+	nodeBody := `{"mode":"link","rawLink":"` + rawLink + `"}`
+	nodeRes := performRequest(app, http.MethodPost, "/api/v1/nodes/import", nodeBody, token)
+	if nodeRes.Code != http.StatusCreated {
+		t.Fatalf("expected node import status 201, got %d: %s", nodeRes.Code, nodeRes.Body.String())
+	}
+	var node nodeResponse
+	if err := json.Unmarshal(nodeRes.Body.Bytes(), &node); err != nil {
+		t.Fatalf("decode node response: %v", err)
+	}
+
+	createBody := `{"name":"Clash VLESS Reality","format":"clash-mihomo","enabled":true,"nodeIds":[` + strconvUint(node.ID) + `]}`
+	createRes := performRequest(app, http.MethodPost, "/api/v1/subscriptions", createBody, token)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createRes.Code, createRes.Body.String())
+	}
+	var subscription subscriptionResponse
+	if err := json.Unmarshal(createRes.Body.Bytes(), &subscription); err != nil {
+		t.Fatalf("decode subscription response: %v", err)
+	}
+
+	publicRes := performRequest(app, http.MethodGet, subscription.SubscriptionURL, "", "")
+	if publicRes.Code != http.StatusOK {
+		t.Fatalf("expected public status 200, got %d: %s", publicRes.Code, publicRes.Body.String())
+	}
+	body := publicRes.Body.String()
+	for _, want := range []string{
+		`name: "🇺🇸 BWG-MegaBox-Pro"`,
+		`type: "vless"`,
+		`server: "wj.tikle.vip"`,
+		`port: 13348`,
+		`uuid: "8660626b-d84f-4649-b206-7c065b61cf08"`,
+		`tls: true`,
+		`client-fingerprint: "chrome"`,
+		`servername: "tesla.com"`,
+		`network: "tcp"`,
+		`reality-opts:`,
+		`public-key: "A5pF3kaVzVH2PR0Dhq2M1G28HyeHsQqus3gfHeavFyw"`,
+		`short-id: "ce4f61"`,
+		`flow: "xtls-rprx-vision"`,
+		`tfo: false`,
+		`skip-cert-verify: false`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected clash content to contain %q, got: %s", want, body)
+		}
+	}
+}
+
+func TestSubscriptionRenderingSystemVLESSRealityUsesExtractedRawLink(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "sub-system-vless-reality", "sub-system-vless-reality@example.com")
+	db := extractDB(t, nil)
+
+	rawLink := "vless://c0464a28-9013-4e71-b21c-feb8db08dd8e@38.55.108.55:48607?encryption=none&flow=xtls-rprx-vision&security=reality&sni=apple.com&fp=chrome&pbk=Sjwj_5APjh2rKP0HC1anVN2-Ey1LtjLNq16VPn_r4Bg&sid=55cde0a4&type=tcp&headerType=none#🇺🇸 LazyCat-VMISS-Reality-vl-reality-vision-uslax-JwMH8U"
+	encryptor, err := security.NewEncryptor("test-encryption-key")
+	if err != nil {
+		t.Fatalf("create encryptor: %v", err)
+	}
+	encrypted, err := encryptor.Encrypt(`{"rawLink":"` + rawLink + `","sensitive":"{\"uuid\":\"c0464a28-9013-4e71-b21c-feb8db08dd8e\"}"}`)
+	if err != nil {
+		t.Fatalf("encrypt node config: %v", err)
+	}
+
+	node := domain.ProtocolNode{
+		UserID:                 1,
+		Name:                   "🇺🇸 LazyCat-VMISS-Reality",
+		Protocol:               "Vless-tcp-reality-vision",
+		ListenPort:             48607,
+		EncryptedProtocolJSON:  encrypted,
+		SubscriptionConfigJSON: `{"address":"38.55.108.55","port":48607,"generatedFrom":"argosbx"}`,
+		InstallMethod:          domain.NodeInstallMethodSystem,
+		Status:                 domain.NodeStatusInstallOK,
+	}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatalf("create vless node: %v", err)
+	}
+
+	createBody := `{"name":"System VLESS Reality","format":"shadowrocket","enabled":true,"nodeIds":[` + strconvUint(node.ID) + `]}`
+	createRes := performRequest(app, http.MethodPost, "/api/v1/subscriptions", createBody, token)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createRes.Code, createRes.Body.String())
+	}
+	var subscription subscriptionResponse
+	if err := json.Unmarshal(createRes.Body.Bytes(), &subscription); err != nil {
+		t.Fatalf("decode subscription response: %v", err)
+	}
+
+	publicRes := performRequest(app, http.MethodGet, subscription.SubscriptionURL, "", "")
+	if publicRes.Code != http.StatusOK {
+		t.Fatalf("expected public status 200, got %d: %s", publicRes.Code, publicRes.Body.String())
+	}
+	if publicRes.Body.String() != rawLink {
+		t.Fatalf("expected raw vless link %q, got %q", rawLink, publicRes.Body.String())
+	}
+}
+
+func TestSubscriptionRenderingClashShadowsocksFromShareLink(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "sub-clash-ss", "sub-clash-ss@example.com")
+
+	rawLink := "ss://YWVzLTEyOC1nY206cGFzc3dvcmQ@example.com:8388?udp=true&plugin=obfs&mode=tls&host=bing.com#SS%20Node"
+	nodeBody := `{"mode":"link","rawLink":"` + rawLink + `"}`
+	nodeRes := performRequest(app, http.MethodPost, "/api/v1/nodes/import", nodeBody, token)
+	if nodeRes.Code != http.StatusCreated {
+		t.Fatalf("expected node import status 201, got %d: %s", nodeRes.Code, nodeRes.Body.String())
+	}
+	var node nodeResponse
+	if err := json.Unmarshal(nodeRes.Body.Bytes(), &node); err != nil {
+		t.Fatalf("decode node response: %v", err)
+	}
+
+	createBody := `{"name":"Clash SS","format":"clash-mihomo","enabled":true,"nodeIds":[` + strconvUint(node.ID) + `]}`
+	createRes := performRequest(app, http.MethodPost, "/api/v1/subscriptions", createBody, token)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createRes.Code, createRes.Body.String())
+	}
+	var subscription subscriptionResponse
+	if err := json.Unmarshal(createRes.Body.Bytes(), &subscription); err != nil {
+		t.Fatalf("decode subscription response: %v", err)
+	}
+
+	publicRes := performRequest(app, http.MethodGet, subscription.SubscriptionURL, "", "")
+	if publicRes.Code != http.StatusOK {
+		t.Fatalf("expected public status 200, got %d: %s", publicRes.Code, publicRes.Body.String())
+	}
+	body := publicRes.Body.String()
+	for _, want := range []string{
+		`type: "ss"`,
+		`cipher: "aes-128-gcm"`,
+		`password: "password"`,
+		`udp: true`,
+		`plugin: "obfs"`,
+		`plugin-opts:`,
+		`mode: "tls"`,
+		`host: "bing.com"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected clash content to contain %q, got: %s", want, body)
+		}
+	}
+}
+
+func TestSubscriptionRenderingClashInstalledShadowsocksIncludesCipherAndPassword(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "sub-clash-installed-ss", "sub-clash-installed-ss@example.com")
+	db := extractDB(t, nil)
+
+	encryptor, err := security.NewEncryptor("test-encryption-key")
+	if err != nil {
+		t.Fatalf("create encryptor: %v", err)
+	}
+	encrypted, err := encryptor.Encrypt(`{"sensitive":"{\"password\":\"lT1+yItplfIlVv3dUMyO1A==\",\"cipher\":\"2022-blake3-aes-128-gcm\"}"}`)
+	if err != nil {
+		t.Fatalf("encrypt node config: %v", err)
+	}
+	node := domain.ProtocolNode{
+		UserID:                 1,
+		Name:                   "Installed SS",
+		Protocol:               "Shadowsocks-2022",
+		ListenPort:             20886,
+		EncryptedProtocolJSON:  encrypted,
+		SubscriptionConfigJSON: `{"address":"185.213.17.174","port":20886,"generatedFrom":"argosbx"}`,
+		InstallMethod:          domain.NodeInstallMethodSystem,
+		Status:                 domain.NodeStatusInstallOK,
+	}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatalf("create installed shadowsocks node: %v", err)
+	}
+
+	createBody := `{"name":"Installed SS Clash","format":"clash-mihomo","enabled":true,"nodeIds":[` + strconvUint(node.ID) + `]}`
+	createRes := performRequest(app, http.MethodPost, "/api/v1/subscriptions", createBody, token)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createRes.Code, createRes.Body.String())
+	}
+	var subscription subscriptionResponse
+	if err := json.Unmarshal(createRes.Body.Bytes(), &subscription); err != nil {
+		t.Fatalf("decode subscription response: %v", err)
+	}
+
+	publicRes := performRequest(app, http.MethodGet, subscription.SubscriptionURL, "", "")
+	if publicRes.Code != http.StatusOK {
+		t.Fatalf("expected public status 200, got %d: %s", publicRes.Code, publicRes.Body.String())
+	}
+	body := publicRes.Body.String()
+	for _, want := range []string{
+		`type: "ss"`,
+		`server: "185.213.17.174"`,
+		`port: 20886`,
+		`cipher: "2022-blake3-aes-128-gcm"`,
+		`password: "lT1+yItplfIlVv3dUMyO1A=="`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected clash content to contain %q, got: %s", want, body)
+		}
 	}
 }
 

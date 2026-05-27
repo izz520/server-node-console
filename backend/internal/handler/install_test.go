@@ -60,6 +60,29 @@ func TestInstallNodeGeneratesDefaultPortAndSensitiveParams(t *testing.T) {
 	}
 }
 
+func TestInstallShadowsocksGeneratesSensitiveParams(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "install-ss-default", "install-ss-default@example.com")
+	server := createTestServer(t, app, token, "SS Default Install Server")
+
+	body := `{"serverId":` + strconvUint(server.ID) + `,"name":"SS Node","protocol":"Shadowsocks-2022","port":20886}`
+	res := performRequest(app, http.MethodPost, "/api/v1/nodes/install", body, token)
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("expected install status 202, got %d: %s", res.Code, res.Body.String())
+	}
+
+	var response struct {
+		Node nodeResponse     `json:"node"`
+		Task taskListResponse `json:"task"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode install response: %v", err)
+	}
+	if !response.Node.HasSensitive {
+		t.Fatal("expected shadowsocks password and cipher to be encrypted and marked as sensitive")
+	}
+}
+
 func TestInstallNodeStoresPublicSubscriptionPort(t *testing.T) {
 	app := testRouter(t)
 	token := registerTestUser(t, app, "install-public-port", "install-public-port@example.com")
@@ -80,6 +103,30 @@ func TestInstallNodeStoresPublicSubscriptionPort(t *testing.T) {
 	}
 	if response.Node.PublicPort == nil || *response.Node.PublicPort != 48888 {
 		t.Fatalf("expected public subscription port 48888, got %+v", response.Node)
+	}
+}
+
+func TestInstallFixedArgoRequiresDomainAndToken(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "install-argo-required", "install-argo-required@example.com")
+	server := createTestServer(t, app, token, "Argo Required Server")
+
+	body := `{"serverId":` + strconvUint(server.ID) + `,"name":"Argo Node","protocol":"Argo 固定隧道","port":20888}`
+	res := performRequest(app, http.MethodPost, "/api/v1/nodes/install", body, token)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected fixed argo validation status 400, got %d: %s", res.Code, res.Body.String())
+	}
+}
+
+func TestInstallFixedArgoAcceptsDisplayProtocolName(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "install-argo-display", "install-argo-display@example.com")
+	server := createTestServer(t, app, token, "Argo Display Server")
+
+	body := `{"serverId":` + strconvUint(server.ID) + `,"name":"Argo Node","protocol":"Argo 固定隧道","port":20888,"argoDomain":"tunnel.example.com","argoToken":"token-value"}`
+	res := performRequest(app, http.MethodPost, "/api/v1/nodes/install", body, token)
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("expected fixed argo install status 202, got %d: %s", res.Code, res.Body.String())
 	}
 }
 
@@ -134,6 +181,43 @@ func TestUninstallNodeCreatesTask(t *testing.T) {
 	}
 
 	res := performRequest(app, http.MethodPost, "/api/v1/nodes/1/uninstall", "", token)
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("expected uninstall status 202, got %d: %s", res.Code, res.Body.String())
+	}
+
+	var response struct {
+		Node nodeResponse     `json:"node"`
+		Task taskListResponse `json:"task"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode uninstall response: %v", err)
+	}
+	if response.Node.Status != string(domain.NodeStatusUninstalling) || response.Task.Type != string(domain.TaskTypeUninstall) {
+		t.Fatalf("unexpected uninstall response: %+v", response)
+	}
+}
+
+func TestUninstallNodeAcceptsDeleteAfterUninstall(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "uninstall-delete-user", "uninstall-delete-user@example.com")
+	server := createTestServer(t, app, token, "Uninstall Delete Server")
+	db := extractDB(t, nil)
+
+	node := domain.ProtocolNode{
+		UserID:                 server.UserID,
+		ServerID:               &server.ID,
+		Name:                   "Installed Node",
+		Protocol:               "AnyTLS",
+		ListenPort:             8443,
+		SubscriptionConfigJSON: `{"address":"127.0.0.1","port":8443}`,
+		InstallMethod:          domain.NodeInstallMethodSystem,
+		Status:                 domain.NodeStatusInstallOK,
+	}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatalf("create installed node: %v", err)
+	}
+
+	res := performRequest(app, http.MethodPost, "/api/v1/nodes/"+strconvUint(node.ID)+"/uninstall", `{"deleteAfterUninstall":true}`, token)
 	if res.Code != http.StatusAccepted {
 		t.Fatalf("expected uninstall status 202, got %d: %s", res.Code, res.Body.String())
 	}

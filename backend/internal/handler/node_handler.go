@@ -255,23 +255,29 @@ func (h *Handler) DeleteNode(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if node.InstallMethod == domain.NodeInstallMethodSystem && node.Status != domain.NodeStatusUninstalled {
+	if node.InstallMethod == domain.NodeInstallMethodSystem &&
+		node.Status != domain.NodeStatusUninstalled &&
+		node.Status != domain.NodeStatusInstallFailed {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "system installed node must be uninstalled before deletion"})
 		return
 	}
 
-	if err := h.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("node_id = ?", node.ID).Delete(&domain.SubscriptionNode{}).Error; err != nil {
-			return err
-		}
-		return tx.Delete(&node).Error
-	}); err != nil {
+	if err := h.deleteNodeRecord(node.ID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete node failed"})
 		return
 	}
 
 	h.logOperation(&node.UserID, "node.delete", "node", map[string]any{"nodeId": node.ID, "name": node.Name})
 	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) deleteNodeRecord(nodeID uint) error {
+	return h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("node_id = ?", nodeID).Delete(&domain.SubscriptionNode{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&domain.ProtocolNode{}, nodeID).Error
+	})
 }
 
 func (h *Handler) findOwnedNode(c *gin.Context) (domain.ProtocolNode, bool) {
@@ -310,6 +316,7 @@ type normalizedNodePayload struct {
 	Remark     string
 	RawLink    string
 	ConfigJSON string
+	Sensitive  string
 }
 
 func (p normalizedNodePayload) Validate() error {
@@ -378,7 +385,10 @@ func (h *Handler) buildExternalNodePayload(req nodeImportRequest) (normalizedNod
 		if err != nil {
 			return normalizedNodePayload{}, "", err
 		}
-		encrypted, err := h.encryptNodeConfig(encryptedNodeConfig{RawLink: payload.RawLink})
+		encrypted, err := h.encryptNodeConfig(encryptedNodeConfig{
+			Sensitive: payload.Sensitive,
+			RawLink:   payload.RawLink,
+		})
 		return payload, encrypted, err
 	default:
 		return normalizedNodePayload{}, "", errors.New("unsupported import mode")
@@ -408,6 +418,11 @@ func parseShareLink(rawLink string, displayName string) (normalizedNodePayload, 
 	if strings.HasPrefix(rawLink, "vmess://") {
 		return parseVMessLink(rawLink, displayName)
 	}
+	if strings.HasPrefix(strings.ToLower(rawLink), "ss://") {
+		if payload, err := parseSSLink(rawLink, displayName); err == nil {
+			return payload, nil
+		}
+	}
 
 	parsed, err := url.Parse(rawLink)
 	if err != nil || parsed.Scheme == "" {
@@ -436,6 +451,83 @@ func parseShareLink(rawLink string, displayName string) (normalizedNodePayload, 
 	payload := normalizedNodePayload{
 		Name:       name,
 		Protocol:   protocol,
+		Address:    parsed.Hostname(),
+		Port:       port,
+		ListenPort: port,
+		RawLink:    rawLink,
+	}
+	if protocol == "Vless" {
+		payload.Sensitive = parseVLESSSensitive(parsed)
+	}
+	if err := payload.Validate(); err != nil {
+		return normalizedNodePayload{}, err
+	}
+	return payload, nil
+}
+
+func parseVLESSSensitive(parsed *url.URL) string {
+	values := map[string]string{}
+	if parsed.User != nil {
+		if uuid := strings.TrimSpace(parsed.User.Username()); uuid != "" {
+			values["uuid"] = uuid
+		}
+	}
+	query := parsed.Query()
+	for _, key := range []string{"type", "security", "pbk", "fp", "sni", "sid", "spx", "flow", "encryption"} {
+		if value := strings.TrimSpace(query.Get(key)); value != "" {
+			values[key] = value
+		}
+	}
+	if len(values) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(values)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func parseSSLink(rawLink string, displayName string) (normalizedNodePayload, error) {
+	withoutScheme := strings.TrimPrefix(rawLink, "ss://")
+	mainPart := withoutScheme
+	if index := strings.IndexAny(mainPart, "?#"); index >= 0 {
+		mainPart = mainPart[:index]
+	}
+	if !strings.Contains(mainPart, "@") {
+		decoded := decodeBase64String(mainPart)
+		if decoded == "" {
+			return normalizedNodePayload{}, errors.New("invalid shadowsocks link")
+		}
+		rawLink = "ss://" + decoded
+		if fragmentIndex := strings.Index(withoutScheme, "#"); fragmentIndex >= 0 {
+			rawLink += withoutScheme[fragmentIndex:]
+		}
+	}
+
+	parsed, err := url.Parse(rawLink)
+	if err != nil || parsed.Hostname() == "" {
+		return normalizedNodePayload{}, errors.New("invalid shadowsocks link")
+	}
+	port := 0
+	if parsed.Port() != "" {
+		port, _ = strconv.Atoi(parsed.Port())
+	}
+	if port == 0 {
+		return normalizedNodePayload{}, errors.New("share link port is required")
+	}
+	name := strings.TrimSpace(displayName)
+	if name == "" {
+		if fragment, err := url.QueryUnescape(parsed.Fragment); err == nil {
+			name = strings.TrimSpace(fragment)
+		}
+	}
+	if name == "" {
+		name = "ss-" + parsed.Hostname()
+	}
+	payload := normalizedNodePayload{
+		Name:       name,
+		Protocol:   "Shadowsocks-2022",
 		Address:    parsed.Hostname(),
 		Port:       port,
 		ListenPort: port,
@@ -510,6 +602,8 @@ func normalizeProtocol(scheme string) string {
 		return "Hysteria2"
 	case "tuic":
 		return "Tuic"
+	case "anytls":
+		return "AnyTLS"
 	case "socks", "socks5":
 		return "Socks5"
 	default:

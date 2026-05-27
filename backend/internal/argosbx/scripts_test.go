@@ -30,6 +30,7 @@ func TestBuildInstallCommandWrapsScriptWithRemoteBootstrap(t *testing.T) {
 		"name=",
 		"uuid=",
 		"curl -Ls https://raw.githubusercontent.com/yonggekkk/argosbx/main/argosbx.sh",
+		" rep",
 	} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("expected command to contain %q, got %q", want, command)

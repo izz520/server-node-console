@@ -251,7 +251,7 @@ func (h *Handler) serverDeletionBlocked(server domain.Server) (bool, string) {
 	var subscriptionRefCount int64
 	if err := h.db.Model(&domain.SubscriptionNode{}).
 		Joins("JOIN protocol_nodes ON protocol_nodes.id = subscription_nodes.node_id").
-		Where("protocol_nodes.user_id = ? AND protocol_nodes.server_id = ? AND protocol_nodes.deleted_at IS NULL", server.UserID, server.ID).
+		Where("protocol_nodes.user_id = ? AND protocol_nodes.server_id = ? AND protocol_nodes.status != ? AND protocol_nodes.deleted_at IS NULL", server.UserID, server.ID, domain.NodeStatusUninstalled).
 		Count(&subscriptionRefCount).Error; err != nil {
 		return true, "check server references failed"
 	}
@@ -261,7 +261,7 @@ func (h *Handler) serverDeletionBlocked(server domain.Server) (bool, string) {
 
 	var nodeCount int64
 	if err := h.db.Model(&domain.ProtocolNode{}).
-		Where("user_id = ? AND server_id = ?", server.UserID, server.ID).
+		Where("user_id = ? AND server_id = ? AND status != ?", server.UserID, server.ID, domain.NodeStatusUninstalled).
 		Count(&nodeCount).Error; err != nil {
 		return true, "check server nodes failed"
 	}

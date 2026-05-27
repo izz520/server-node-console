@@ -23,6 +23,8 @@ var protocolVariables = map[string]string{
 	"Vmess-ws":                       "vmpt",
 	"Argo临时隧道":                       "vmpt",
 	"Argo固定隧道":                       "vmpt",
+	"Argo 临时隧道":                      "vmpt",
+	"Argo 固定隧道":                      "vmpt",
 }
 
 type InstallParams struct {
@@ -72,7 +74,7 @@ func BuildInstallCommand(params InstallParams) (string, string, error) {
 	}
 
 	prefix := renderVars(values)
-	return remoteShellCommand(strings.TrimSpace(prefix + " " + MainScript)), varName, nil
+	return remoteShellCommand(strings.TrimSpace(prefix + " " + MainScript + " rep")), varName, nil
 }
 
 func BuildUninstallCommand() string {
