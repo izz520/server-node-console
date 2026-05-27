@@ -55,6 +55,7 @@ func New(deps Dependencies) *gin.Engine {
 			protected.POST("/nodes/install", h.InstallNode)
 			protected.POST("/nodes/import", h.ImportNode)
 			protected.POST("/nodes/:id/uninstall", h.UninstallNode)
+			protected.GET("/nodes/:id/share-link", h.GetNodeShareLink)
 			protected.PUT("/nodes/:id", h.UpdateNode)
 			protected.DELETE("/nodes/:id", h.DeleteNode)
 

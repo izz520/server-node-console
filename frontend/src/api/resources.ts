@@ -50,6 +50,7 @@ export interface NodeImportPayload {
   configJson?: string;
   sensitive?: string;
   displayName?: string;
+  chainProxyNodeId?: number | null;
 }
 
 export interface NodeInstallPayload {
@@ -66,6 +67,7 @@ export interface NodeInstallPayload {
   argoToken?: string;
   namePrefix?: string;
   remark?: string;
+  chainProxyNodeId?: number | null;
 }
 
 export interface NodeUpdatePayload {
@@ -78,6 +80,11 @@ export interface NodeUpdatePayload {
   remark?: string;
   configJson?: string;
   sensitive?: string;
+  chainProxyNodeId?: number | null;
+}
+
+export interface NodeShareLinkResponse {
+  rawLink: string;
 }
 
 export interface SubscriptionPayload {
@@ -183,6 +190,13 @@ export async function uninstallNode(
 
 export async function updateNode(id: number, payload: NodeUpdatePayload) {
   const { data } = await request.put<ProtocolNode>(`/nodes/${id}`, payload);
+  return data;
+}
+
+export async function getNodeShareLink(id: number) {
+  const { data } = await request.get<NodeShareLinkResponse>(
+    `/nodes/${id}/share-link`,
+  );
   return data;
 }
 

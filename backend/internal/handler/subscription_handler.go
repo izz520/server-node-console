@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -476,53 +477,110 @@ func (h *Handler) subscriptionNodeViews(subscriptionID uint) ([]subscriptionNode
 	for _, node := range nodes {
 		byID[node.ID] = node
 	}
+	if err := h.loadChainProxyDependencies(byID, nodes); err != nil {
+		return nil, err
+	}
 
-	views := make([]subscriptionNodeView, 0, len(links))
-	sensitiveByNodeID, err := h.subscriptionNodeSensitiveValues(nodes)
+	allNodes := protocolNodesFromMap(byID)
+	views := make([]subscriptionNodeView, 0, len(allNodes))
+	sensitiveByNodeID, err := h.subscriptionNodeSensitiveValues(allNodes)
 	if err != nil {
 		return nil, err
 	}
+	included := map[uint]struct{}{}
 	for _, link := range links {
 		node, ok := byID[link.NodeID]
 		if !ok {
 			continue
 		}
-		config := nodeConfig{}
-		_ = json.Unmarshal([]byte(node.SubscriptionConfigJSON), &config)
-		port := config.Port
-		if node.PublicPort != nil {
-			port = *node.PublicPort
+		views = append(views, subscriptionNodeViewFromNode(node, byID, sensitiveByNodeID[node.ID]))
+		included[node.ID] = struct{}{}
+	}
+	for _, node := range allNodes {
+		if _, ok := included[node.ID]; ok {
+			continue
 		}
-		encryptedValues := sensitiveByNodeID[node.ID]
-		rawLink := firstNonEmpty(config.RawLink, mapValue(encryptedValues, encryptedRawLinkKey))
-		sensitiveValues := mergeStringMaps(parseShareLinkValues(rawLink), encryptedValues)
-		views = append(views, subscriptionNodeView{
-			Name:          node.Name,
-			Protocol:      node.Protocol,
-			Address:       config.Address,
-			Port:          port,
-			Remark:        config.Remark,
-			RawLink:       rawLink,
-			ConfigJSON:    config.ConfigJSON,
-			UUID:          mapValue(sensitiveValues, "uuid", "id"),
-			Password:      firstNonEmpty(mapValue(sensitiveValues, "password", "passwd", "pass"), mapValue(sensitiveValues, "uuid", "id")),
-			Peer:          mapValue(sensitiveValues, "peer", "sni", "server_name", "servername", "serverName"),
-			HPKP:          mapValue(sensitiveValues, "hpkp", "pin", "certificate_public_key_sha256"),
-			UDP:           truthyValue(mapValue(sensitiveValues, "udp")),
-			Insecure:      truthyValue(mapValue(sensitiveValues, "insecure", "skip-cert-verify", "skip_cert_verify", "allowInsecure", "allow_insecure")),
-			AllowInsecure: truthyValue(mapValue(sensitiveValues, "allowInsecure", "allow_insecure")),
-			Network:       mapValue(sensitiveValues, "network", "type"),
-			Security:      mapValue(sensitiveValues, "security"),
-			Flow:          mapValue(sensitiveValues, "flow"),
-			Fingerprint:   mapValue(sensitiveValues, "fp", "fingerprint", "client-fingerprint", "client_fingerprint"),
-			ServerName:    mapValue(sensitiveValues, "sni", "servername", "server_name", "serverName", "host"),
-			RealityPBK:    mapValue(sensitiveValues, "pbk", "public-key", "public_key"),
-			RealitySID:    mapValue(sensitiveValues, "sid", "short-id", "short_id"),
-			SpiderX:       mapValue(sensitiveValues, "spx", "spider-x", "spider_x"),
-			Values:        sensitiveValues,
-		})
+		views = append(views, subscriptionNodeViewFromNode(node, byID, sensitiveByNodeID[node.ID]))
 	}
 	return views, nil
+}
+
+func protocolNodesFromMap(byID map[uint]domain.ProtocolNode) []domain.ProtocolNode {
+	nodes := make([]domain.ProtocolNode, 0, len(byID))
+	for _, node := range byID {
+		nodes = append(nodes, node)
+	}
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].ID < nodes[j].ID
+	})
+	return nodes
+}
+
+func subscriptionNodeViewFromNode(node domain.ProtocolNode, byID map[uint]domain.ProtocolNode, encryptedValues map[string]string) subscriptionNodeView {
+	config := nodeConfig{}
+	_ = json.Unmarshal([]byte(node.SubscriptionConfigJSON), &config)
+	port := config.Port
+	if node.PublicPort != nil {
+		port = *node.PublicPort
+	}
+	rawLink := firstNonEmpty(config.RawLink, mapValue(encryptedValues, encryptedRawLinkKey))
+	sensitiveValues := mergeStringMaps(parseShareLinkValues(rawLink), encryptedValues)
+	if config.ChainProxyNodeID != nil {
+		if upstream, ok := byID[*config.ChainProxyNodeID]; ok {
+			sensitiveValues["dialer-proxy"] = upstream.Name
+		}
+	}
+	return subscriptionNodeView{
+		Name:          node.Name,
+		Protocol:      node.Protocol,
+		Address:       config.Address,
+		Port:          port,
+		Remark:        config.Remark,
+		RawLink:       rawLink,
+		ConfigJSON:    config.ConfigJSON,
+		UUID:          mapValue(sensitiveValues, "uuid", "id"),
+		Password:      firstNonEmpty(mapValue(sensitiveValues, "password", "passwd", "pass"), mapValue(sensitiveValues, "uuid", "id")),
+		Peer:          mapValue(sensitiveValues, "peer", "sni", "server_name", "servername", "serverName"),
+		HPKP:          mapValue(sensitiveValues, "hpkp", "pin", "certificate_public_key_sha256"),
+		UDP:           truthyValue(mapValue(sensitiveValues, "udp")),
+		Insecure:      truthyValue(mapValue(sensitiveValues, "insecure", "skip-cert-verify", "skip_cert_verify", "allowInsecure", "allow_insecure")),
+		AllowInsecure: truthyValue(mapValue(sensitiveValues, "allowInsecure", "allow_insecure")),
+		Network:       mapValue(sensitiveValues, "network", "type"),
+		Security:      mapValue(sensitiveValues, "security"),
+		Flow:          mapValue(sensitiveValues, "flow"),
+		Fingerprint:   mapValue(sensitiveValues, "fp", "fingerprint", "client-fingerprint", "client_fingerprint"),
+		ServerName:    mapValue(sensitiveValues, "sni", "servername", "server_name", "serverName", "host"),
+		RealityPBK:    mapValue(sensitiveValues, "pbk", "public-key", "public_key"),
+		RealitySID:    mapValue(sensitiveValues, "sid", "short-id", "short_id"),
+		SpiderX:       mapValue(sensitiveValues, "spx", "spider-x", "spider_x"),
+		Values:        sensitiveValues,
+	}
+}
+
+func (h *Handler) loadChainProxyDependencies(byID map[uint]domain.ProtocolNode, initial []domain.ProtocolNode) error {
+	queue := append([]domain.ProtocolNode{}, initial...)
+	for len(queue) > 0 {
+		node := queue[0]
+		queue = queue[1:]
+		config := nodeConfig{}
+		_ = json.Unmarshal([]byte(node.SubscriptionConfigJSON), &config)
+		if config.ChainProxyNodeID == nil || *config.ChainProxyNodeID == 0 {
+			continue
+		}
+		if _, ok := byID[*config.ChainProxyNodeID]; ok {
+			continue
+		}
+		var upstream domain.ProtocolNode
+		if err := h.db.Where("user_id = ? AND id = ? AND status IN ?", node.UserID, *config.ChainProxyNodeID, []domain.NodeStatus{domain.NodeStatusImported, domain.NodeStatusInstallOK}).First(&upstream).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			return err
+		}
+		byID[upstream.ID] = upstream
+		queue = append(queue, upstream)
+	}
+	return nil
 }
 
 func (h *Handler) subscriptionNodeSensitiveValues(nodes []domain.ProtocolNode) (map[uint]map[string]string, error) {
@@ -662,6 +720,11 @@ func parseShareLinkValues(rawLink string) map[string]string {
 			values["password"] = username
 			if scheme == "anytls" {
 				values["uuid"] = username
+			}
+		case "socks", "socks5":
+			values["username"] = username
+			if hasPassword {
+				values["password"] = password
 			}
 		case "tuic":
 			if hasPassword {

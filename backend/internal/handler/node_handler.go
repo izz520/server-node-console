@@ -19,56 +19,64 @@ import (
 )
 
 type nodeImportRequest struct {
-	Mode        string `json:"mode" binding:"required"`
-	Name        string `json:"name"`
-	Protocol    string `json:"protocol"`
-	Address     string `json:"address"`
-	Port        int    `json:"port"`
-	ListenPort  int    `json:"listenPort"`
-	PublicPort  *int   `json:"publicPort"`
-	RawLink     string `json:"rawLink"`
-	Remark      string `json:"remark"`
-	ConfigJSON  string `json:"configJson"`
-	Sensitive   string `json:"sensitive"`
-	DisplayName string `json:"displayName"`
+	Mode             string `json:"mode" binding:"required"`
+	Name             string `json:"name"`
+	Protocol         string `json:"protocol"`
+	Address          string `json:"address"`
+	Port             int    `json:"port"`
+	ListenPort       int    `json:"listenPort"`
+	PublicPort       *int   `json:"publicPort"`
+	RawLink          string `json:"rawLink"`
+	Remark           string `json:"remark"`
+	ConfigJSON       string `json:"configJson"`
+	Sensitive        string `json:"sensitive"`
+	DisplayName      string `json:"displayName"`
+	ChainProxyNodeID *uint  `json:"chainProxyNodeId"`
 }
 
 type nodeUpdateRequest struct {
-	Name       string `json:"name" binding:"required,max=120"`
-	Protocol   string `json:"protocol" binding:"required,max=120"`
-	Address    string `json:"address" binding:"required,max=255"`
-	Port       int    `json:"port" binding:"required,min=1,max=65535"`
-	ListenPort int    `json:"listenPort" binding:"min=0,max=65535"`
-	PublicPort *int   `json:"publicPort"`
-	Remark     string `json:"remark"`
-	ConfigJSON string `json:"configJson"`
-	Sensitive  string `json:"sensitive"`
+	Name             string `json:"name" binding:"required,max=120"`
+	Protocol         string `json:"protocol" binding:"required,max=120"`
+	Address          string `json:"address" binding:"required,max=255"`
+	Port             int    `json:"port" binding:"required,min=1,max=65535"`
+	ListenPort       int    `json:"listenPort" binding:"min=0,max=65535"`
+	PublicPort       *int   `json:"publicPort"`
+	Remark           string `json:"remark"`
+	ConfigJSON       string `json:"configJson"`
+	Sensitive        string `json:"sensitive"`
+	ChainProxyNodeID *uint  `json:"chainProxyNodeId"`
 }
 
 type nodeResponse struct {
-	ID            uint                     `json:"id"`
-	UserID        uint                     `json:"userId"`
-	Name          string                   `json:"name"`
-	ServerID      *uint                    `json:"serverId"`
-	Protocol      string                   `json:"protocol"`
-	Address       string                   `json:"address"`
-	Port          int                      `json:"port"`
-	ListenPort    int                      `json:"listenPort"`
-	PublicPort    *int                     `json:"publicPort"`
-	Remark        string                   `json:"remark"`
-	InstallMethod domain.NodeInstallMethod `json:"installMethod"`
-	Status        domain.NodeStatus        `json:"status"`
-	HasSensitive  bool                     `json:"hasSensitive"`
-	CreatedAt     time.Time                `json:"createdAt"`
-	UpdatedAt     time.Time                `json:"updatedAt"`
+	ID               uint                     `json:"id"`
+	UserID           uint                     `json:"userId"`
+	Name             string                   `json:"name"`
+	ServerID         *uint                    `json:"serverId"`
+	Protocol         string                   `json:"protocol"`
+	Address          string                   `json:"address"`
+	Port             int                      `json:"port"`
+	ListenPort       int                      `json:"listenPort"`
+	PublicPort       *int                     `json:"publicPort"`
+	Remark           string                   `json:"remark"`
+	InstallMethod    domain.NodeInstallMethod `json:"installMethod"`
+	Status           domain.NodeStatus        `json:"status"`
+	HasSensitive     bool                     `json:"hasSensitive"`
+	ChainProxyNodeID *uint                    `json:"chainProxyNodeId,omitempty"`
+	CreatedAt        time.Time                `json:"createdAt"`
+	UpdatedAt        time.Time                `json:"updatedAt"`
+}
+
+type nodeShareLinkResponse struct {
+	RawLink string `json:"rawLink"`
 }
 
 type nodeConfig struct {
-	Address    string `json:"address"`
-	Port       int    `json:"port"`
-	Remark     string `json:"remark,omitempty"`
-	RawLink    string `json:"rawLink,omitempty"`
-	ConfigJSON string `json:"configJson,omitempty"`
+	Address          string `json:"address"`
+	Port             int    `json:"port"`
+	Remark           string `json:"remark,omitempty"`
+	RawLink          string `json:"rawLink,omitempty"`
+	ConfigJSON       string `json:"configJson,omitempty"`
+	ChainProxyNodeID *uint  `json:"chainProxyNodeId,omitempty"`
 }
 
 type encryptedNodeConfig struct {
@@ -112,6 +120,9 @@ func (h *Handler) ImportNode(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if !h.validateChainProxyNode(c, userID, 0, normalized.ChainProxyNodeID) {
+		return
+	}
 
 	node := domain.ProtocolNode{
 		UserID:                 userID,
@@ -146,20 +157,24 @@ func (h *Handler) UpdateNode(c *gin.Context) {
 	}
 
 	normalized := normalizedNodePayload{
-		Name:       strings.TrimSpace(req.Name),
-		Protocol:   strings.TrimSpace(req.Protocol),
-		Address:    strings.TrimSpace(req.Address),
-		Port:       req.Port,
-		ListenPort: req.ListenPort,
-		PublicPort: req.PublicPort,
-		Remark:     strings.TrimSpace(req.Remark),
-		ConfigJSON: strings.TrimSpace(req.ConfigJSON),
+		Name:             strings.TrimSpace(req.Name),
+		Protocol:         strings.TrimSpace(req.Protocol),
+		Address:          strings.TrimSpace(req.Address),
+		Port:             req.Port,
+		ListenPort:       req.ListenPort,
+		PublicPort:       req.PublicPort,
+		Remark:           strings.TrimSpace(req.Remark),
+		ConfigJSON:       strings.TrimSpace(req.ConfigJSON),
+		ChainProxyNodeID: req.ChainProxyNodeID,
 	}
 	if normalized.ListenPort == 0 {
 		normalized.ListenPort = normalized.Port
 	}
 	if err := normalized.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !h.validateChainProxyNode(c, node.UserID, node.ID, normalized.ChainProxyNodeID) {
 		return
 	}
 
@@ -194,6 +209,31 @@ func (h *Handler) UpdateNode(c *gin.Context) {
 	c.JSON(http.StatusOK, toNodeResponse(node))
 }
 
+func (h *Handler) GetNodeShareLink(c *gin.Context) {
+	node, ok := h.findOwnedNode(c)
+	if !ok {
+		return
+	}
+	byID := map[uint]domain.ProtocolNode{node.ID: node}
+	if err := h.loadChainProxyDependencies(byID, []domain.ProtocolNode{node}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "load chain proxy nodes failed"})
+		return
+	}
+	nodes := protocolNodesFromMap(byID)
+	sensitiveByNodeID, err := h.subscriptionNodeSensitiveValues(nodes)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "load node sensitive values failed"})
+		return
+	}
+	view := subscriptionNodeViewFromNode(node, byID, sensitiveByNodeID[node.ID])
+	rawLink := strings.TrimSpace(view.shareLine())
+	if rawLink == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "node share link is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, nodeShareLinkResponse{RawLink: rawLink})
+}
+
 func (h *Handler) updateSystemNodeSubscriptionSettings(c *gin.Context, node domain.ProtocolNode, normalized normalizedNodePayload) {
 	config := nodeConfig{}
 	_ = json.Unmarshal([]byte(node.SubscriptionConfigJSON), &config)
@@ -210,6 +250,7 @@ func (h *Handler) updateSystemNodeSubscriptionSettings(c *gin.Context, node doma
 	}
 
 	config.Remark = normalized.Remark
+	config.ChainProxyNodeID = normalized.ChainProxyNodeID
 	node.Name = normalized.Name
 	node.PublicPort = normalized.PublicPort
 	node.SubscriptionConfigJSON = updateNodeConfigJSON(node.SubscriptionConfigJSON, config)
@@ -221,6 +262,28 @@ func (h *Handler) updateSystemNodeSubscriptionSettings(c *gin.Context, node doma
 
 	h.logOperation(&node.UserID, "node.update", "node", map[string]any{"nodeId": node.ID, "name": node.Name})
 	c.JSON(http.StatusOK, toNodeResponse(node))
+}
+
+func (h *Handler) validateChainProxyNode(c *gin.Context, userID uint, nodeID uint, chainProxyNodeID *uint) bool {
+	if chainProxyNodeID == nil || *chainProxyNodeID == 0 {
+		return true
+	}
+	if *chainProxyNodeID == nodeID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "chain proxy cannot point to the same node"})
+		return false
+	}
+	var count int64
+	if err := h.db.Model(&domain.ProtocolNode{}).
+		Where("user_id = ? AND id = ? AND status IN ?", userID, *chainProxyNodeID, []domain.NodeStatus{domain.NodeStatusImported, domain.NodeStatusInstallOK}).
+		Count(&count).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "check chain proxy node failed"})
+		return false
+	}
+	if count == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "chain proxy node is invalid"})
+		return false
+	}
+	return true
 }
 
 func updateNodeConfigJSON(current string, config nodeConfig) string {
@@ -242,6 +305,11 @@ func updateNodeConfigJSON(current string, config nodeConfig) string {
 		delete(values, "configJson")
 	} else {
 		values["configJson"] = config.ConfigJSON
+	}
+	if config.ChainProxyNodeID == nil || *config.ChainProxyNodeID == 0 {
+		delete(values, "chainProxyNodeId")
+	} else {
+		values["chainProxyNodeId"] = *config.ChainProxyNodeID
 	}
 	data, err := json.Marshal(values)
 	if err != nil {
@@ -307,16 +375,17 @@ func (h *Handler) findOwnedNode(c *gin.Context) (domain.ProtocolNode, bool) {
 }
 
 type normalizedNodePayload struct {
-	Name       string
-	Protocol   string
-	Address    string
-	Port       int
-	ListenPort int
-	PublicPort *int
-	Remark     string
-	RawLink    string
-	ConfigJSON string
-	Sensitive  string
+	Name             string
+	Protocol         string
+	Address          string
+	Port             int
+	ListenPort       int
+	PublicPort       *int
+	Remark           string
+	RawLink          string
+	ConfigJSON       string
+	ChainProxyNodeID *uint
+	Sensitive        string
 }
 
 func (p normalizedNodePayload) Validate() error {
@@ -343,11 +412,12 @@ func (p normalizedNodePayload) Validate() error {
 
 func (p normalizedNodePayload) SubscriptionConfigJSON() string {
 	config := nodeConfig{
-		Address:    p.Address,
-		Port:       p.Port,
-		Remark:     p.Remark,
-		RawLink:    p.RawLink,
-		ConfigJSON: p.ConfigJSON,
+		Address:          p.Address,
+		Port:             p.Port,
+		Remark:           p.Remark,
+		RawLink:          p.RawLink,
+		ConfigJSON:       p.ConfigJSON,
+		ChainProxyNodeID: p.ChainProxyNodeID,
 	}
 	data, err := json.Marshal(config)
 	if err != nil {
@@ -361,14 +431,15 @@ func (h *Handler) buildExternalNodePayload(req nodeImportRequest) (normalizedNod
 	switch mode {
 	case "manual":
 		payload := normalizedNodePayload{
-			Name:       strings.TrimSpace(req.Name),
-			Protocol:   strings.TrimSpace(req.Protocol),
-			Address:    strings.TrimSpace(req.Address),
-			Port:       req.Port,
-			ListenPort: req.ListenPort,
-			PublicPort: req.PublicPort,
-			Remark:     strings.TrimSpace(req.Remark),
-			ConfigJSON: strings.TrimSpace(req.ConfigJSON),
+			Name:             strings.TrimSpace(req.Name),
+			Protocol:         strings.TrimSpace(req.Protocol),
+			Address:          strings.TrimSpace(req.Address),
+			Port:             req.Port,
+			ListenPort:       req.ListenPort,
+			PublicPort:       req.PublicPort,
+			Remark:           strings.TrimSpace(req.Remark),
+			ConfigJSON:       strings.TrimSpace(req.ConfigJSON),
+			ChainProxyNodeID: req.ChainProxyNodeID,
 		}
 		if payload.ListenPort == 0 {
 			payload.ListenPort = payload.Port
@@ -616,20 +687,21 @@ func toNodeResponse(node domain.ProtocolNode) nodeResponse {
 	_ = json.Unmarshal([]byte(node.SubscriptionConfigJSON), &config)
 
 	return nodeResponse{
-		ID:            node.ID,
-		UserID:        node.UserID,
-		Name:          node.Name,
-		ServerID:      node.ServerID,
-		Protocol:      node.Protocol,
-		Address:       config.Address,
-		Port:          config.Port,
-		ListenPort:    node.ListenPort,
-		PublicPort:    node.PublicPort,
-		Remark:        config.Remark,
-		InstallMethod: node.InstallMethod,
-		Status:        node.Status,
-		HasSensitive:  node.EncryptedProtocolJSON != "",
-		CreatedAt:     node.CreatedAt,
-		UpdatedAt:     node.UpdatedAt,
+		ID:               node.ID,
+		UserID:           node.UserID,
+		Name:             node.Name,
+		ServerID:         node.ServerID,
+		Protocol:         node.Protocol,
+		Address:          config.Address,
+		Port:             config.Port,
+		ListenPort:       node.ListenPort,
+		PublicPort:       node.PublicPort,
+		Remark:           config.Remark,
+		InstallMethod:    node.InstallMethod,
+		Status:           node.Status,
+		HasSensitive:     node.EncryptedProtocolJSON != "",
+		ChainProxyNodeID: config.ChainProxyNodeID,
+		CreatedAt:        node.CreatedAt,
+		UpdatedAt:        node.UpdatedAt,
 	}
 }

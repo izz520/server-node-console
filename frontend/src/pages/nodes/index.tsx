@@ -1,18 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpRight,
+  Copy,
   Cpu,
   LinkIcon,
   LoaderCircle,
   Pencil,
   Plus,
+  QrCode,
   Server,
   Trash2,
 } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { type FormEvent, useState } from "react";
 import { getErrorMessage } from "@/api/errors";
 import {
   deleteNode,
+  getNodeShareLink,
   importNode,
   installNode,
   listNodes,
@@ -62,6 +66,7 @@ const emptyManualForm = {
   publicPort: "",
   remark: "",
   sensitive: "",
+  chainProxyNodeId: "",
 };
 
 const emptyLinkForm = {
@@ -83,6 +88,7 @@ const emptyInstallForm = {
   namePrefix: "",
   remark: "",
   shareLink: "",
+  chainProxyNodeId: "",
 };
 
 /** Frontend parser: extract fields from a share link to pre-fill install form */
@@ -160,6 +166,8 @@ export function NodesPage() {
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(
     null,
   );
+  const [qrNode, setQrNode] = useState<ProtocolNode | null>(null);
+  const [qrLink, setQrLink] = useState("");
   const [message, setMessage] = useState("");
   const [isNodeDialogOpen, setIsNodeDialogOpen] = useState(false);
   const addToast = useToastStore((state) => state.addToast);
@@ -221,6 +229,17 @@ export function NodesPage() {
     },
   });
 
+  const shareLinkMutation = useMutation({
+    mutationFn: getNodeShareLink,
+    onSuccess: (data) => {
+      setQrLink(data.rawLink);
+    },
+    onError: (error) => {
+      setQrNode(null);
+      addToast(getErrorMessage(error, "获取二维码链接失败"), "error");
+    },
+  });
+
   const nodes = nodesQuery.data ?? [];
   const visibleNodes = nodes.filter((node) => node.status !== "uninstalled");
   const servers = serversQuery.data ?? [];
@@ -261,6 +280,9 @@ export function NodesPage() {
       publicPort: node.publicPort ? String(node.publicPort) : "",
       remark: node.remark ?? "",
       sensitive: "",
+      chainProxyNodeId: node.chainProxyNodeId
+        ? String(node.chainProxyNodeId)
+        : "",
     });
     setMessage("");
     setIsNodeDialogOpen(true);
@@ -273,6 +295,8 @@ export function NodesPage() {
     setLinkForm(emptyLinkForm);
     setInstallForm(emptyInstallForm);
     setEditingNode(null);
+    setQrNode(null);
+    setQrLink("");
     setMode("install");
     setMessage("");
   }
@@ -324,6 +348,7 @@ export function NodesPage() {
                 node.installMethod === "external" ||
                 (node.installMethod === "system" &&
                   node.status === "install_success");
+              const canShare = isSuccess;
               const canDelete =
                 node.installMethod === "external" ||
                 node.status === "install_success" ||
@@ -331,7 +356,7 @@ export function NodesPage() {
               const deleteRequiresUninstall =
                 node.installMethod === "system" &&
                 node.status === "install_success";
-              const hasActions = canEdit || canDelete;
+              const hasActions = canEdit || canShare || canDelete;
 
               return (
                 <Card
@@ -413,6 +438,18 @@ export function NodesPage() {
                           </Badge>
                         </div>
                       )}
+                      {node.chainProxyNodeId && (
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-500 font-semibold text-[10px] uppercase tracking-wider">
+                            链式上游
+                          </span>
+                          <Badge className="border-white/[0.04] bg-white/[0.02] text-slate-300 text-[10px] px-2 py-0.5 font-semibold">
+                            {nodes.find(
+                              (item) => item.id === node.chainProxyNodeId,
+                            )?.name ?? `#${node.chainProxyNodeId}`}
+                          </Badge>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -435,6 +472,20 @@ export function NodesPage() {
                             >
                               <Pencil className="h-3.5 w-3.5 opacity-70" />
                               <span>编辑参数</span>
+                            </Button>
+                          )}
+                          {canShare && (
+                            <Button
+                              onClick={() => {
+                                setQrNode(node);
+                                setQrLink("");
+                                shareLinkMutation.mutate(node.id);
+                              }}
+                              variant="secondary"
+                              className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
+                              title="节点二维码"
+                            >
+                              <QrCode className="h-3.5 w-3.5" />
                             </Button>
                           )}
                           {canDelete && (
@@ -508,6 +559,8 @@ export function NodesPage() {
             <ManualNodeFields
               form={manualForm}
               lockedCore={editingSystemNode}
+              nodes={visibleNodes}
+              currentNodeId={editingNode.id}
               setForm={setManualForm}
             />
           ) : mode === "link" ? (
@@ -515,6 +568,7 @@ export function NodesPage() {
           ) : (
             <InstallNodeFields
               form={installForm}
+              nodes={visibleNodes}
               servers={serversQuery.data ?? []}
               setForm={setInstallForm}
             />
@@ -571,6 +625,56 @@ export function NodesPage() {
           setConfirmAction(null);
         }}
       />
+      <Dialog
+        isOpen={Boolean(qrNode)}
+        onClose={() => {
+          setQrNode(null);
+          setQrLink("");
+        }}
+        title="节点二维码"
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-white/[0.04] bg-white/[0.02] p-4">
+            <div className="text-sm font-bold text-slate-100">
+              {qrNode?.name}
+            </div>
+            <div className="mt-1 text-[10px] font-mono text-slate-500">
+              {qrNode?.protocol}
+            </div>
+          </div>
+          {shareLinkMutation.isPending || !qrLink ? (
+            <div className="flex h-64 items-center justify-center rounded-lg border border-white/[0.04] bg-slate-950 text-xs font-semibold text-slate-500">
+              正在生成二维码...
+            </div>
+          ) : (
+            <>
+              <div className="flex justify-center rounded-lg border border-white/[0.04] bg-white p-5">
+                <QRCodeSVG value={qrLink} size={240} level="M" />
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  className="font-mono text-[10px]"
+                  readOnly
+                  value={qrLink}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="h-9 w-9 shrink-0 p-0"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(qrLink);
+                    addToast("分享链接已复制", "success");
+                  }}
+                  title="复制分享链接"
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      </Dialog>
     </div>
   );
 }
@@ -634,10 +738,12 @@ function StatusDot({
 
 function InstallNodeFields({
   form,
+  nodes,
   servers,
   setForm,
 }: {
   form: typeof emptyInstallForm;
+  nodes: ProtocolNode[];
   servers: Array<{ id: number; name: string; host: string; status: string }>;
   setForm: (form: typeof emptyInstallForm) => void;
 }) {
@@ -724,6 +830,11 @@ function InstallNodeFields({
           </SelectContent>
         </Select>
       </Field>
+      <ChainProxyField
+        value={form.chainProxyNodeId}
+        nodes={nodes}
+        onChange={(value) => setForm({ ...form, chainProxyNodeId: value })}
+      />
       {(isVisible("port") || isVisible("publicPort")) && (
         <div className="grid gap-3 md:grid-cols-2">
           {isVisible("port") && (
@@ -863,10 +974,14 @@ function InstallNodeFields({
 function ManualNodeFields({
   form,
   lockedCore = false,
+  nodes,
+  currentNodeId,
   setForm,
 }: {
   form: typeof emptyManualForm;
   lockedCore?: boolean;
+  nodes: ProtocolNode[];
+  currentNodeId?: number;
   setForm: (form: typeof emptyManualForm) => void;
 }) {
   return (
@@ -961,6 +1076,12 @@ function ManualNodeFields({
           />
         </Field>
       )}
+      <ChainProxyField
+        value={form.chainProxyNodeId}
+        nodes={nodes}
+        currentNodeId={currentNodeId}
+        onChange={(value) => setForm({ ...form, chainProxyNodeId: value })}
+      />
       <Field label="备注">
         <Input
           onChange={(event) => setForm({ ...form, remark: event.target.value })}
@@ -1005,6 +1126,48 @@ function LinkNodeFields({
         />
       </Field>
     </>
+  );
+}
+
+function ChainProxyField({
+  value,
+  nodes,
+  currentNodeId,
+  onChange,
+}: {
+  value: string;
+  nodes: ProtocolNode[];
+  currentNodeId?: number;
+  onChange: (value: string) => void;
+}) {
+  const availableNodes = nodes.filter(
+    (node) =>
+      node.id !== currentNodeId &&
+      (node.status === "install_success" || node.status === "imported"),
+  );
+  return (
+    <Field label="Clash 链式上游">
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger>
+          <SelectValue
+            placeholder="不使用链式代理"
+            displayValue={
+              value
+                ? availableNodes.find((node) => String(node.id) === value)?.name
+                : undefined
+            }
+          />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="">不使用链式代理</SelectItem>
+          {availableNodes.map((node) => (
+            <SelectItem key={node.id} value={String(node.id)}>
+              {node.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Field>
   );
 }
 
@@ -1055,6 +1218,9 @@ function buildUpdatePayload(form: typeof emptyManualForm): NodeUpdatePayload {
     publicPort: form.publicPort ? Number(form.publicPort) : null,
     remark: form.remark,
     sensitive: form.sensitive,
+    chainProxyNodeId: form.chainProxyNodeId
+      ? Number(form.chainProxyNodeId)
+      : null,
   };
 }
 
@@ -1073,6 +1239,9 @@ function buildInstallPayload(form: any): NodeInstallPayload {
     argoToken: form.argoToken,
     namePrefix: form.namePrefix,
     remark: form.remark,
+    chainProxyNodeId: form.chainProxyNodeId
+      ? Number(form.chainProxyNodeId)
+      : null,
   };
 }
 

@@ -694,6 +694,69 @@ func TestSubscriptionRenderingCustomClashTemplateReplacesAnchoredProxyGroups(t *
 	}
 }
 
+func TestClashSubscriptionIncludesChainProxyDependency(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "chain-proxy", "chain-proxy@example.com")
+	upstream := importTestNode(t, app, token, "Upstream Node")
+	downstream := importTestNode(t, app, token, "Downstream Node")
+
+	updateBody := `{"name":"Downstream Node","protocol":"Hysteria2","address":"example.com","port":443,"listenPort":443,"chainProxyNodeId":` + strconvUint(upstream.ID) + `}`
+	updateRes := performRequest(app, http.MethodPut, "/api/v1/nodes/"+strconvUint(downstream.ID), updateBody, token)
+	if updateRes.Code != http.StatusOK {
+		t.Fatalf("update downstream chain proxy failed: %d %s", updateRes.Code, updateRes.Body.String())
+	}
+
+	subscriptionBody := `{"name":"Chain Clash","format":"clash-mihomo","clashTemplate":"rule-cn","enabled":true,"nodeIds":[` + strconvUint(downstream.ID) + `]}`
+	res := performRequest(app, http.MethodPost, "/api/v1/subscriptions", subscriptionBody, token)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("create subscription failed: %d %s", res.Code, res.Body.String())
+	}
+	var subscription subscriptionResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &subscription); err != nil {
+		t.Fatalf("decode subscription: %v", err)
+	}
+
+	publicRes := performRequest(app, http.MethodGet, "/sub/"+subscription.Token, "", "")
+	body := publicRes.Body.String()
+	if !strings.Contains(body, `name: "Upstream Node"`) ||
+		!strings.Contains(body, `name: "Downstream Node"`) ||
+		!strings.Contains(body, `dialer-proxy: "Upstream Node"`) {
+		t.Fatalf("expected chain proxy dependency and dialer-proxy in clash output: %s", body)
+	}
+}
+
+func TestClashSubscriptionParsesSocks5CredentialsFromRawLink(t *testing.T) {
+	app := testRouter(t)
+	token := registerTestUser(t, app, "socks5-credentials", "socks5-credentials@example.com")
+	rawLink := "socks5://20ri3UoV:Q1cLg3fj@163.123.202.206:5491#%F0%9F%87%BA%F0%9F%87%B8%20Webshare-US-ISP"
+	nodeBody := `{"mode":"link","rawLink":"` + rawLink + `"}`
+	nodeRes := performRequest(app, http.MethodPost, "/api/v1/nodes/import", nodeBody, token)
+	if nodeRes.Code != http.StatusCreated {
+		t.Fatalf("import socks5 node failed: %d %s", nodeRes.Code, nodeRes.Body.String())
+	}
+	var node nodeResponse
+	if err := json.Unmarshal(nodeRes.Body.Bytes(), &node); err != nil {
+		t.Fatalf("decode node: %v", err)
+	}
+
+	subscriptionBody := `{"name":"Socks Clash","format":"clash-mihomo","clashTemplate":"rule-cn","enabled":true,"nodeIds":[` + strconvUint(node.ID) + `]}`
+	res := performRequest(app, http.MethodPost, "/api/v1/subscriptions", subscriptionBody, token)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("create subscription failed: %d %s", res.Code, res.Body.String())
+	}
+	var subscription subscriptionResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &subscription); err != nil {
+		t.Fatalf("decode subscription: %v", err)
+	}
+
+	publicRes := performRequest(app, http.MethodGet, "/sub/"+subscription.Token, "", "")
+	body := publicRes.Body.String()
+	if !strings.Contains(body, `username: "20ri3UoV"`) ||
+		!strings.Contains(body, `password: "Q1cLg3fj"`) {
+		t.Fatalf("expected socks5 credentials in clash output: %s", body)
+	}
+}
+
 func importTestNode(t *testing.T, app http.Handler, token string, name string) nodeResponse {
 	t.Helper()
 

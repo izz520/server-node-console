@@ -68,6 +68,7 @@ export interface ProtocolNode {
   installMethod: "system" | "external";
   status: NodeStatus;
   hasSensitive: boolean;
+  chainProxyNodeId?: number | null;
 }
 
 export interface Subscription {

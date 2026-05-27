@@ -23,19 +23,20 @@ import (
 )
 
 type installNodeRequest struct {
-	ServerID      uint   `json:"serverId" binding:"required"`
-	Name          string `json:"name" binding:"required,max=120"`
-	Protocol      string `json:"protocol" binding:"required,max=120"`
-	Port          int    `json:"port" binding:"min=0,max=65535"`
-	PublicPort    *int   `json:"publicPort"`
-	UUID          string `json:"uuid"`
-	RealityDomain string `json:"realityDomain"`
-	CDNDomain     string `json:"cdnDomain"`
-	ArgoMode      string `json:"argoMode"`
-	ArgoDomain    string `json:"argoDomain"`
-	ArgoToken     string `json:"argoToken"`
-	NamePrefix    string `json:"namePrefix"`
-	Remark        string `json:"remark"`
+	ServerID         uint   `json:"serverId" binding:"required"`
+	Name             string `json:"name" binding:"required,max=120"`
+	Protocol         string `json:"protocol" binding:"required,max=120"`
+	Port             int    `json:"port" binding:"min=0,max=65535"`
+	PublicPort       *int   `json:"publicPort"`
+	UUID             string `json:"uuid"`
+	RealityDomain    string `json:"realityDomain"`
+	CDNDomain        string `json:"cdnDomain"`
+	ArgoMode         string `json:"argoMode"`
+	ArgoDomain       string `json:"argoDomain"`
+	ArgoToken        string `json:"argoToken"`
+	NamePrefix       string `json:"namePrefix"`
+	Remark           string `json:"remark"`
+	ChainProxyNodeID *uint  `json:"chainProxyNodeId"`
 }
 
 type uninstallNodeRequest struct {
@@ -48,10 +49,11 @@ type installNodeResponse struct {
 }
 
 type installConfig struct {
-	Address       string `json:"address"`
-	Port          int    `json:"port"`
-	Remark        string `json:"remark,omitempty"`
-	GeneratedFrom string `json:"generatedFrom"`
+	Address          string `json:"address"`
+	Port             int    `json:"port"`
+	Remark           string `json:"remark,omitempty"`
+	GeneratedFrom    string `json:"generatedFrom"`
+	ChainProxyNodeID *uint  `json:"chainProxyNodeId,omitempty"`
 }
 
 type installTarget struct {
@@ -89,12 +91,16 @@ func (h *Handler) InstallNode(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if !h.validateChainProxyNode(c, userID, 0, req.ChainProxyNodeID) {
+		return
+	}
 
 	configJSON, _ := json.Marshal(installConfig{
-		Address:       server.Host,
-		Port:          req.Port,
-		Remark:        req.Remark,
-		GeneratedFrom: "argosbx",
+		Address:          server.Host,
+		Port:             req.Port,
+		Remark:           req.Remark,
+		GeneratedFrom:    "argosbx",
+		ChainProxyNodeID: req.ChainProxyNodeID,
 	})
 	encryptedConfig, err := h.encryptInstallConfig(req)
 	if err != nil {
