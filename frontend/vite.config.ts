@@ -23,4 +23,7 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    allowedHosts: ["server.995858.xyz", "server.yasol.me"],
+  },
 });
