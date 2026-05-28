@@ -137,6 +137,52 @@ FRONTEND_BIND=0.0.0.0:4173
 VITE_API_BASE_URL=https://api.example.com/api/v1
 ```
 
+### 6. 节点可用性检查
+
+节点页面支持两种可用性检查：
+
+- 单个节点检查：点击节点卡片里的检查按钮。
+- 全部节点检查：点击节点列表顶部的“全部检查”。
+
+检查会在后端临时启动 Mihomo，通过节点访问：
+
+```text
+https://cp.cloudflare.com/generate_204
+```
+
+成功后会显示：
+
+- 节点是否可用
+- 服务端到该节点的响应耗时
+- 出口 IP
+- 出口国家/地区
+
+响应耗时只代表后端服务器发起检查时的链路表现，不代表用户本地客户端的实际延迟。
+
+后端 Docker 镜像会内置 Mihomo。如果你自己构建后端镜像，可以通过构建参数指定版本：
+
+```bash
+docker build --build-arg MIHOMO_VERSION=v1.19.22 -t your-backend-image ./backend
+```
+
+如果源码方式启动后端，可以把 Mihomo 可执行文件放在项目内：
+
+```text
+backend/bin/mihomo
+```
+
+如果使用自定义 Mihomo 路径，可以在后端环境变量里指定：
+
+```env
+MIHOMO_BIN=/usr/local/bin/mihomo
+```
+
+如果需要和本地 Mihomo 客户端的 url-test 配置完全对齐，可以指定相同的检查 URL：
+
+```env
+PROXY_TEST_URL=https://cp.cloudflare.com/generate_204
+```
+
 ## 本地开发
 
 ### 1. 准备 PostgreSQL

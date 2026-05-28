@@ -71,6 +71,19 @@ export interface ProtocolNode {
   chainProxyNodeId?: number | null;
 }
 
+export interface NodeProxyTestResult {
+  nodeId: number;
+  nodeName: string;
+  status: "ok" | "failed";
+  latencyMs?: number;
+  exitIp?: string;
+  country?: string;
+  countryCode?: string;
+  error?: string;
+  testUrl: string;
+  checkedAt: string;
+}
+
 export interface Subscription {
   id: number;
   userId: number;

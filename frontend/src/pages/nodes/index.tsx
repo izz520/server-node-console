@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Activity,
   ArrowUpRight,
   Copy,
   Cpu,
+  Globe2,
   LinkIcon,
   LoaderCircle,
   Pencil,
@@ -21,6 +23,8 @@ import {
   installNode,
   listNodes,
   listServers,
+  testAllNodeProxies,
+  testNodeProxy,
   type NodeImportPayload,
   type NodeInstallPayload,
   type NodeUpdatePayload,
@@ -47,7 +51,7 @@ import {
 } from "@/constants/protocols";
 import { cn } from "@/lib/utils";
 import { useToastStore } from "@/stores/toast";
-import type { ProtocolNode } from "@/types/domain";
+import type { NodeProxyTestResult, ProtocolNode } from "@/types/domain";
 
 type ImportMode = "link" | "install";
 type ConfirmAction = {
@@ -170,6 +174,9 @@ export function NodesPage() {
   const [qrLink, setQrLink] = useState("");
   const [message, setMessage] = useState("");
   const [isNodeDialogOpen, setIsNodeDialogOpen] = useState(false);
+  const [proxyResults, setProxyResults] = useState<
+    Record<number, NodeProxyTestResult>
+  >({});
   const addToast = useToastStore((state) => state.addToast);
 
   const nodesQuery = useQuery({
@@ -240,8 +247,51 @@ export function NodesPage() {
     },
   });
 
+  const proxyTestMutation = useMutation({
+    mutationFn: testNodeProxy,
+    onSuccess: (result) => {
+      setProxyResults((current) => ({
+        ...current,
+        [result.nodeId]: result,
+      }));
+      addToast(
+        result.status === "ok"
+          ? `${result.nodeName} 节点可用`
+          : `${result.nodeName} 节点不可用`,
+        result.status === "ok" ? "success" : "error",
+      );
+    },
+    onError: (error) => {
+      addToast(getErrorMessage(error, "节点可用性检查失败"), "error");
+    },
+  });
+
+  const allProxyTestMutation = useMutation({
+    mutationFn: testAllNodeProxies,
+    onSuccess: (results) => {
+      setProxyResults((current) => {
+        const next = { ...current };
+        for (const result of results) {
+          next[result.nodeId] = result;
+        }
+        return next;
+      });
+      const successCount = results.filter((item) => item.status === "ok").length;
+      addToast(
+        `可用性检查完成：${successCount}/${results.length} 个节点可用`,
+        successCount === results.length ? "success" : "error",
+      );
+    },
+    onError: (error) => {
+      addToast(getErrorMessage(error, "全部节点可用性检查失败"), "error");
+    },
+  });
+
   const nodes = nodesQuery.data ?? [];
   const visibleNodes = nodes.filter((node) => node.status !== "uninstalled");
+  const testableNodes = visibleNodes.filter(
+    (node) => node.status === "install_success" || node.status === "imported",
+  );
   const servers = serversQuery.data ?? [];
 
   const findServerName = (node: ProtocolNode) => {
@@ -313,16 +363,33 @@ export function NodesPage() {
             部署或贴入各种高性能网络代理节点，支持节点状态健康检查与系统级一键装机部署。
           </p>
         </div>
-        <Button
-          onClick={() => {
-            resetForms();
-            setIsNodeDialogOpen(true);
-          }}
-          className="bg-white text-slate-950 hover:bg-slate-100 px-4 h-9 font-semibold text-xs tracking-wide rounded-lg flex items-center gap-1.5 self-start sm:self-center"
-        >
-          <Plus className="h-4 w-4" />
-          添加协议节点
-        </Button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
+          <Button
+            onClick={() => allProxyTestMutation.mutate()}
+            disabled={
+              allProxyTestMutation.isPending || testableNodes.length === 0
+            }
+            variant="secondary"
+            className="px-4 h-9 font-semibold text-xs tracking-wide rounded-lg flex items-center gap-1.5"
+          >
+            {allProxyTestMutation.isPending ? (
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+            ) : (
+              <Activity className="h-4 w-4" />
+            )}
+            全部检查
+          </Button>
+          <Button
+            onClick={() => {
+              resetForms();
+              setIsNodeDialogOpen(true);
+            }}
+            className="bg-white text-slate-950 hover:bg-slate-100 px-4 h-9 font-semibold text-xs tracking-wide rounded-lg flex items-center gap-1.5"
+          >
+            <Plus className="h-4 w-4" />
+            添加协议节点
+          </Button>
+        </div>
       </section>
 
       {/* Main Grid Nodes Layout */}
@@ -349,6 +416,7 @@ export function NodesPage() {
                 (node.installMethod === "system" &&
                   node.status === "install_success");
               const canShare = isSuccess;
+              const canTest = isSuccess;
               const canDelete =
                 node.installMethod === "external" ||
                 node.status === "install_success" ||
@@ -356,7 +424,11 @@ export function NodesPage() {
               const deleteRequiresUninstall =
                 node.installMethod === "system" &&
                 node.status === "install_success";
-              const hasActions = canEdit || canShare || canDelete;
+              const hasActions = canEdit || canShare || canDelete || canTest;
+              const proxyResult = proxyResults[node.id];
+              const isTesting =
+                proxyTestMutation.isPending &&
+                proxyTestMutation.variables === node.id;
 
               return (
                 <Card
@@ -450,6 +522,60 @@ export function NodesPage() {
                           </Badge>
                         </div>
                       )}
+                      {proxyResult && (
+                        <div className="rounded-lg border border-white/[0.04] bg-black/20 px-3 py-2 text-xs">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-slate-500 font-semibold text-[10px] uppercase tracking-wider">
+                              可用性检查
+                            </span>
+                            {proxyResult.status === "ok" ? (
+                              <span className="font-mono text-emerald-300 text-[11px] flex items-center gap-1">
+                                <Activity className="h-3 w-3" />
+                                可用
+                              </span>
+                            ) : (
+                              <span className="text-rose-300 text-[11px]">
+                                不可用
+                              </span>
+                            )}
+                          </div>
+                          {proxyResult.status === "ok" &&
+                            proxyResult.latencyMs && (
+                              <div className="mt-1 flex items-center justify-between gap-3">
+                                <span className="text-slate-500 font-semibold text-[10px] uppercase tracking-wider">
+                                  响应耗时
+                                </span>
+                                <span className="font-mono text-slate-300 text-[11px]">
+                                  {proxyResult.latencyMs} ms
+                                </span>
+                              </div>
+                            )}
+                          {proxyResult.status === "ok" &&
+                            (proxyResult.countryCode || proxyResult.exitIp) && (
+                              <div className="mt-1 flex items-center justify-between gap-3">
+                                <span className="text-slate-500 font-semibold text-[10px] uppercase tracking-wider">
+                                  出口
+                                </span>
+                                <span className="font-mono text-slate-300 text-[11px] flex min-w-0 items-center gap-1">
+                                  <Globe2 className="h-3 w-3 text-slate-500" />
+                                  <span className="truncate">
+                                    {proxyResult.countryCode ||
+                                      proxyResult.country ||
+                                      "未知"}
+                                    {proxyResult.exitIp
+                                      ? ` / ${proxyResult.exitIp}`
+                                      : ""}
+                                  </span>
+                                </span>
+                              </div>
+                            )}
+                          {proxyResult.status !== "ok" && proxyResult.error && (
+                            <div className="mt-1 truncate text-[10px] text-rose-300/80">
+                              {proxyResult.error}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -486,6 +612,23 @@ export function NodesPage() {
                               title="节点二维码"
                             >
                               <QrCode className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          {canTest && (
+                            <Button
+                              onClick={() => proxyTestMutation.mutate(node.id)}
+                              disabled={
+                                isTesting || allProxyTestMutation.isPending
+                              }
+                              variant="secondary"
+                              className="h-8 w-8 p-0 rounded-lg flex items-center justify-center"
+                              title="检查节点可用性"
+                            >
+                              {isTesting ? (
+                                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Activity className="h-3.5 w-3.5" />
+                              )}
                             </Button>
                           )}
                           {canDelete && (

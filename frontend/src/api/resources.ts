@@ -3,6 +3,7 @@ import type {
   ClashTemplate,
   NATPortMapping,
   OperationLog,
+  NodeProxyTestResult,
   ProtocolNode,
   Server,
   SSHAuthMethod,
@@ -197,6 +198,19 @@ export async function getNodeShareLink(id: number) {
   const { data } = await request.get<NodeShareLinkResponse>(
     `/nodes/${id}/share-link`,
   );
+  return data;
+}
+
+export async function testNodeProxy(id: number) {
+  const { data } = await request.post<NodeProxyTestResult>(
+    `/nodes/${id}/test-proxy`,
+  );
+  return data;
+}
+
+export async function testAllNodeProxies() {
+  const { data } =
+    await request.post<NodeProxyTestResult[]>("/nodes/test-proxy");
   return data;
 }
 
