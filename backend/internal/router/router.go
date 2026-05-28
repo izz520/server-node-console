@@ -95,14 +95,29 @@ func New(deps Dependencies) *gin.Engine {
 
 func cors(allowedOrigins []string) gin.HandlerFunc {
 	allowed := make(map[string]struct{}, len(allowedOrigins))
+	allowAll := false
 	for _, origin := range allowedOrigins {
+		if origin == "*" {
+			allowAll = true
+			continue
+		}
 		allowed[origin] = struct{}{}
 	}
 
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
-		if _, ok := allowed[origin]; ok {
-			c.Header("Access-Control-Allow-Origin", origin)
+		allowOrigin := ""
+		if allowAll {
+			allowOrigin = origin
+			if allowOrigin == "" {
+				allowOrigin = "*"
+			}
+		} else if _, ok := allowed[origin]; ok {
+			allowOrigin = origin
+		}
+
+		if allowOrigin != "" {
+			c.Header("Access-Control-Allow-Origin", allowOrigin)
 			c.Header("Vary", "Origin")
 			c.Header("Access-Control-Allow-Credentials", "true")
 			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")

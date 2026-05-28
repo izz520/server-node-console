@@ -23,6 +23,120 @@ tasks/     每次功能变更的任务记录文档
 - sing-box、Clash/Mihomo、v2rayN、Shadowrocket、Base64 订阅输出。
 - 操作日志和安全中心。
 
+## Docker Compose 部署
+
+推荐用 Docker Compose 直接启动数据库、后端和前端。
+
+### 1. 准备环境变量
+
+在项目根目录创建 `.env`：
+
+```env
+POSTGRES_PASSWORD=你的数据库密码
+JWT_SECRET=随机长字符串
+ENCRYPTION_KEY=随机长字符串
+```
+
+生成随机字符串可以用：
+
+```bash
+openssl rand -hex 32
+```
+
+说明：
+
+- `POSTGRES_PASSWORD` 是 PostgreSQL 容器初始化数据库用户时使用的密码。
+- `JWT_SECRET` 用于签发和校验登录 token，部署后不要随意修改。
+- `ENCRYPTION_KEY` 用于加密服务器 SSH 凭据等敏感数据，部署后不要随意修改，否则旧数据可能无法解密。
+
+其他配置都有默认值，通常不需要填写：
+
+- 数据库用户默认：`postgres`
+- 数据库名默认：`singbox_manager`
+- 数据库端口默认只监听本机：`127.0.0.1:5432`
+- 后端默认监听公网：`0.0.0.0:8080`
+- 前端默认监听公网：`0.0.0.0:4173`
+- 跨域默认允许全部来源：`CORS_ALLOWED_ORIGINS=*`
+
+### 2. 启动服务
+
+在项目根目录执行：
+
+```bash
+docker compose up -d --build
+```
+
+第一次启动会下载镜像和安装依赖，耗时会稍长。
+
+### 3. 访问地址
+
+前端：
+
+```text
+http://服务器IP:4173
+```
+
+本机测试：
+
+```text
+http://localhost:4173
+```
+
+后端健康检查：
+
+```bash
+curl http://localhost:8080/healthz
+```
+
+前端默认会自动请求当前访问主机的后端端口：
+
+```text
+http://当前访问IP或域名:8080/api/v1
+```
+
+### 4. 常用命令
+
+查看服务状态：
+
+```bash
+docker compose ps
+```
+
+查看日志：
+
+```bash
+docker compose logs -f backend
+docker compose logs -f frontend
+```
+
+停止服务：
+
+```bash
+docker compose down
+```
+
+更新代码后重新部署：
+
+```bash
+docker compose up -d --build
+```
+
+### 5. 可选配置
+
+只有需要改端口或绑定地址时，才需要在 `.env` 里增加这些变量：
+
+```env
+POSTGRES_BIND=127.0.0.1:5432
+BACKEND_BIND=0.0.0.0:8080
+FRONTEND_BIND=0.0.0.0:4173
+```
+
+如果后端通过单独域名访问，可以指定：
+
+```env
+VITE_API_BASE_URL=https://api.example.com/api/v1
+```
+
 ## 本地开发
 
 ### 1. 准备 PostgreSQL

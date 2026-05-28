@@ -25,7 +25,7 @@ func Load() Config {
 		DatabaseDSN:        getEnv("DATABASE_DSN", "host=127.0.0.1 user=postgres password=postgres dbname=singbox_manager port=5432 sslmode=disable TimeZone=Asia/Shanghai"),
 		JWTSecret:          getEnv("JWT_SECRET", "change-me-in-production"),
 		EncryptionKey:      getEnv("ENCRYPTION_KEY", "replace-with-32-byte-secret-key"),
-		CORSAllowedOrigins: splitCSV(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:5173")),
+		CORSAllowedOrigins: splitCSV(getEnv("CORS_ALLOWED_ORIGINS", "*")),
 	}
 }
 
