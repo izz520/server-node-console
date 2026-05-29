@@ -4,6 +4,13 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 const apiProxyTarget = process.env.API_PROXY_TARGET || "http://localhost:8080";
+const previewAllowedHosts = (
+  process.env.PREVIEW_ALLOWED_HOSTS ||
+  "server.995858.xyz,server2.995858.xyz,server.yasol.me"
+)
+  .split(",")
+  .map((host) => host.trim())
+  .filter(Boolean);
 const apiProxy = {
   "/api": {
     target: apiProxyTarget,
@@ -27,7 +34,7 @@ export default defineConfig({
     proxy: apiProxy,
   },
   preview: {
-    allowedHosts: ["server.995858.xyz", "server.yasol.me"],
+    allowedHosts: previewAllowedHosts,
     proxy: apiProxy,
   },
 });
